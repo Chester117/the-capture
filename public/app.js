@@ -421,11 +421,12 @@ function platformKey(platform = '') {
 }
 
 function platformLogo(platform = '') {
+  const version = 'v=20260607-real-logo1';
   const logos = {
-    bilibili: '/assets/platforms/bilibili.png',
-    xiaohongshu: '/assets/platforms/xiaohongshu.png',
-    xiaoyuzhou: '/assets/platforms/xiaoyuzhou.png',
-    youtube: '/assets/platforms/youtube.png',
+    bilibili: `/assets/platforms/bilibili.png?${version}`,
+    xiaohongshu: `/assets/platforms/xiaohongshu.png?${version}`,
+    xiaoyuzhou: `/assets/platforms/xiaoyuzhou.png?${version}`,
+    youtube: `/assets/platforms/youtube.png?${version}`,
   };
   return logos[platformKey(platform)] || '';
 }
