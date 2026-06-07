@@ -55,6 +55,7 @@ let commentSortLoading = '';
 const summaryDrafts = new Map();
 const progressDisplay = new Map();
 const collapsedComments = new Map();
+const timelineScrollPositions = new Map();
 let selectedJobSnapshot = null;
 let currentSummaryMarkdown = '';
 let knownEmotes = new Map();
@@ -410,6 +411,36 @@ function contentPageUrl(job) {
   }
 }
 
+function platformKey(platform = '') {
+  const value = String(platform || '').toLowerCase();
+  if (value.includes('xiaohongshu') || value.includes('rednote')) return 'xiaohongshu';
+  if (value.includes('xiaoyuzhou') || value.includes('cosmos')) return 'xiaoyuzhou';
+  if (value.includes('youtube') || value === 'yt') return 'youtube';
+  if (value.includes('bilibili') || value.includes('b站')) return 'bilibili';
+  return value || 'generic';
+}
+
+function platformLogo(platform = '') {
+  const logos = {
+    bilibili: '/assets/platforms/bilibili.svg',
+    xiaohongshu: '/assets/platforms/xiaohongshu.svg',
+    xiaoyuzhou: '/assets/platforms/xiaoyuzhou.svg',
+    youtube: '/assets/platforms/youtube.svg',
+  };
+  return logos[platformKey(platform)] || '';
+}
+
+function platformLogoForJob(job) {
+  const fromPlatform = platformLogo(job?.platform || '');
+  if (fromPlatform) return fromPlatform;
+  const url = String(job?.url || '');
+  if (/youtube\.com|youtu\.be/i.test(url)) return platformLogo('youtube');
+  if (/bilibili\.com|b23\.tv/i.test(url)) return platformLogo('bilibili');
+  if (/xiaohongshu\.com|xhslink\.com|xhsurl\.com/i.test(url)) return platformLogo('xiaohongshu');
+  if (/xiaoyuzhoufm\.com|podcaster\.xiaoyuzhoufm\.com/i.test(url)) return platformLogo('xiaoyuzhou');
+  return '';
+}
+
 async function copyText(value, button, doneText = '已复制') {
   const original = button?.textContent || '';
   const text = String(value || '');
@@ -671,6 +702,8 @@ function normalizeClockText(value) {
 }
 
 function renderJobTimeline(job) {
+  const previousList = jobTimeline.querySelector('.job-timeline-list');
+  if (previousList && job?.id) timelineScrollPositions.set(job.id, previousList.scrollLeft);
   clear(jobTimeline);
   const events = (job?.timeline || []).filter((event) => event?.label || event?.type);
   jobTimeline.classList.toggle('hidden', !events.length);
@@ -681,9 +714,24 @@ function renderJobTimeline(job) {
   const list = document.createElement('div');
   list.className = 'job-timeline-list';
   const count = events.length;
+  const availableWidth = Math.max(0, jobTimeline.clientWidth - 28);
+  const itemWidth = Math.max(156, Math.floor(availableWidth / Math.max(1, count)));
+  const previousScroll = job?.id ? Number(timelineScrollPositions.get(job.id) || 0) : 0;
   list.style.setProperty('--timeline-count', String(Math.max(1, count)));
-  list.style.gridTemplateColumns = `repeat(${Math.max(1, count)}, minmax(120px, 1fr))`;
+  list.style.setProperty('--timeline-item-width', `${itemWidth}px`);
+  list.style.gridTemplateColumns = `repeat(${Math.max(1, count)}, ${itemWidth}px)`;
+  list.addEventListener('scroll', () => {
+    if (job?.id) timelineScrollPositions.set(job.id, list.scrollLeft);
+  }, { passive: true });
   for (const [index, event] of events.entries()) {
+    if (index < events.length - 1) {
+      const nextStatus = events[index + 1]?.status || '';
+      const segment = document.createElement('span');
+      segment.className = `job-timeline-segment ${['done', 'running'].includes(nextStatus) ? 'done' : ['failed', 'stopped'].includes(nextStatus) ? 'failed' : ''}`;
+      segment.style.left = `${itemWidth / 2 + index * itemWidth}px`;
+      segment.style.width = `${itemWidth}px`;
+      list.appendChild(segment);
+    }
     const item = document.createElement('div');
     item.className = `job-timeline-item ${event.status || 'pending'}`;
     const dot = document.createElement('span');
@@ -695,8 +743,7 @@ function renderJobTimeline(job) {
         const between = document.createElement('span');
         between.className = 'job-timeline-duration';
         between.textContent = shortDuration(ended - started);
-        const midpoint = count > 1 ? ((index + 1) / count) * 100 : 0;
-        between.style.left = `${midpoint}%`;
+        between.style.left = `${(index + 1) * itemWidth}px`;
         list.appendChild(between);
       }
     }
@@ -710,6 +757,8 @@ function renderJobTimeline(job) {
     list.appendChild(item);
   }
   jobTimeline.append(title, list);
+  list.scrollLeft = previousScroll;
+  requestAnimationFrame(() => { list.scrollLeft = previousScroll; });
 }
 
 function renderCaptureProgress(job) {
@@ -1178,12 +1227,24 @@ function renderJobs() {
   for (const job of jobs) {
     const item = document.createElement('button');
     item.type = 'button';
-    item.className = `job-item${job.id === selectedId ? ' active' : ''}`;
+    const logoSrc = platformLogoForJob(job);
+    item.className = `job-item${job.id === selectedId ? ' active' : ''}${logoSrc ? '' : ' no-logo'}`;
+    if (logoSrc) {
+      const logo = document.createElement('img');
+      logo.className = 'platform-logo';
+      logo.src = logoSrc;
+      logo.alt = job.platform || 'platform';
+      logo.loading = 'lazy';
+      item.appendChild(logo);
+    }
+    const body = document.createElement('div');
+    body.className = 'job-item-body';
     const title = document.createElement('strong');
     title.textContent = job.title || job.url;
     const meta = document.createElement('span');
     meta.textContent = `${stateLabel(job.state)} · ${job.platform || 'video'}`;
-    item.append(title, meta);
+    body.append(title, meta);
+    item.appendChild(body);
     item.addEventListener('click', () => selectJob(job.id));
     jobList.appendChild(item);
   }

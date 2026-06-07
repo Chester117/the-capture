@@ -2285,6 +2285,19 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/app.css') return staticFile(res, path.join(publicDir, 'app.css'), 'text/css; charset=utf-8');
     if (req.method === 'GET' && url.pathname === '/app.js') return staticFile(res, path.join(publicDir, 'app.js'), 'application/javascript; charset=utf-8');
+    if (req.method === 'GET' && url.pathname.startsWith('/assets/')) {
+      const relative = path.normalize(url.pathname.replace(/^\/+/, ''));
+      const filePath = path.join(publicDir, relative);
+      const assetsRoot = path.join(publicDir, 'assets') + path.sep;
+      if (!filePath.startsWith(assetsRoot)) return json(res, 404, { ok: false, error: 'not found' });
+      const ext = path.extname(filePath).toLowerCase();
+      const type = ext === '.svg' ? 'image/svg+xml; charset=utf-8'
+        : ext === '.png' ? 'image/png'
+          : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+            : ext === '.webp' ? 'image/webp'
+              : 'application/octet-stream';
+      return staticFile(res, filePath, type, { 'Cache-Control': 'public, max-age=86400' });
+    }
     if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, jobs: jobs.length, auth: Boolean(accessToken) });
 
     if (req.method === 'GET' && url.pathname === '/api/jobs') {

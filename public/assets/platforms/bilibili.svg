@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Bilibili">
+  <rect width="64" height="64" rx="15" fill="#fb7299"/>
+  <path d="M18 22h28a6 6 0 0 1 6 6v15a6 6 0 0 1-6 6H18a6 6 0 0 1-6-6V28a6 6 0 0 1 6-6Z" fill="#fff"/>
+  <path d="M23 17l5 5M41 17l-5 5" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+  <path d="M25 33v7M39 33v7" stroke="#fb7299" stroke-width="4" stroke-linecap="round"/>
+  <path d="M29 43h6" stroke="#fb7299" stroke-width="3" stroke-linecap="round"/>
+</svg>

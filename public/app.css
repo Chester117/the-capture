@@ -181,7 +181,8 @@ aside { padding: 12px; overflow: hidden; }
 .job-item {
   appearance: none;
   display: grid;
-  gap: 4px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
   inline-size: 100%;
   max-inline-size: 100%;
   min-width: 0;
@@ -198,6 +199,21 @@ aside { padding: 12px; overflow: hidden; }
   white-space: normal;
   overflow: hidden;
   box-shadow: none;
+}
+.job-item-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.job-item.no-logo {
+  grid-template-columns: 1fr;
+}
+.platform-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(31, 36, 43, .08);
 }
 .job-item:hover { border-color: #b9c6d4; background: #fbfcfd; }
 .job-item.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
@@ -540,18 +556,29 @@ aside { padding: 12px; overflow: hidden; }
   display: grid;
   gap: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
   padding: 22px 4px 0;
+  scrollbar-gutter: stable;
+  overscroll-behavior-x: contain;
 }
 .job-timeline-list::before {
-  content: "";
+  content: none;
+}
+.job-timeline-segment {
   position: absolute;
-  z-index: 0;
-  left: calc(4px + (100% - 8px) / var(--timeline-count, 1) / 2);
-  right: calc(4px + (100% - 8px) / var(--timeline-count, 1) / 2);
+  z-index: 1;
   top: 29px;
   height: 2px;
   background: #cfd8e3;
   border-radius: 999px;
+  transform: translateX(0);
+}
+.job-timeline-segment.done {
+  background: var(--accent);
+}
+.job-timeline-segment.failed {
+  background: var(--danger);
 }
 .job-timeline-item {
   position: relative;
