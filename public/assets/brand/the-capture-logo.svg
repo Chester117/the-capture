@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="The-Capture">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="72%">
+      <stop offset="0" stop-color="#152236"/>
+      <stop offset=".62" stop-color="#071321"/>
+      <stop offset="1" stop-color="#02070d"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="32" y1="20" x2="94" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f5f9ff"/>
+      <stop offset=".18" stop-color="#b8c7da"/>
+      <stop offset=".45" stop-color="#6f829c"/>
+      <stop offset=".72" stop-color="#263a57"/>
+      <stop offset="1" stop-color="#8fa2bb"/>
+    </linearGradient>
+    <linearGradient id="corner" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9e8fb"/>
+      <stop offset="1" stop-color="#405875"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000" flood-opacity=".45"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  <path d="M40 63.5c0-22.7 16.4-40.5 39-40.5 12.8 0 22.1 4.7 29.1 12.6l-13.6 11.9C90.7 43.1 85.7 40 79.1 40 68 40 59.7 49.5 59.7 63.5S68 87 79.1 87c6.6 0 11.6-3 15.4-7.5l13.6 11.9C101.2 99.3 91.9 104 79.1 104 56.4 104 40 86.2 40 63.5Z" fill="none" stroke="#dce8f7" stroke-width="23" stroke-linecap="round" stroke-linejoin="round" opacity=".9" filter="url(#shadow)"/>
+  <path d="M40 63.5c0-22.7 16.4-40.5 39-40.5 12.8 0 22.1 4.7 29.1 12.6l-13.6 11.9C90.7 43.1 85.7 40 79.1 40 68 40 59.7 49.5 59.7 63.5S68 87 79.1 87c6.6 0 11.6-3 15.4-7.5l13.6 11.9C101.2 99.3 91.9 104 79.1 104 56.4 104 40 86.2 40 63.5Z" fill="none" stroke="url(#metal)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M29 37v-8h8M91 29h8v8M37 99h-8v-8M99 91v8h-8" fill="none" stroke="url(#corner)" stroke-width="4" stroke-linecap="square"/>
+</svg>
