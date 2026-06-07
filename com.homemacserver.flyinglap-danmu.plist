@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.homemacserver.flyinglap-danmu</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Applications/Codex.app/Contents/Resources/node</string>
+    <string>server.mjs</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/homemacserver/Documents/HomeMacServer/HomemacServerAutomation/FlyingLapDanmu</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PORT</key>
+    <string>8799</string>
+    <key>PUBLIC_BASE_URL</key>
+    <string>https://capture.theflyinglapdamnu.top</string>
+    <key>YT_DLP</key>
+    <string>/Users/homemacserver/.local/bin/yt-dlp</string>
+    <key>PYTHON3</key>
+    <string>/usr/bin/python3</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/homemacserver/Documents/HomeMacServer/HomemacServerAutomation/FlyingLapDanmu/flyinglap-danmu.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/homemacserver/Documents/HomeMacServer/HomemacServerAutomation/FlyingLapDanmu/flyinglap-danmu.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>内容捕捉</title>
+  <link rel="stylesheet" href="/app.css?v=20260606-emote-render-all1">
+</head>
+<body>
+  <main class="shell">
+    <section class="topbar">
+      <div>
+        <h1>内容捕捉</h1>
+        <p>Content+Interaction Capture</p>
+      </div>
+      <div class="status-pill" id="health">本机服务</div>
+    </section>
+
+    <section class="submit-band">
+      <form id="capture-form">
+        <div class="input-row">
+          <input id="url-input" name="url" type="text" placeholder="粘贴分享文案、短链接或视频/图文链接" required>
+          <button id="paste-button" class="secondary-button paste-button" type="button">粘贴</button>
+        </div>
+        <label class="toggle-row">
+          <input id="transcribe-toggle" type="checkbox" checked>
+          <span>转写视频</span>
+        </label>
+        <button type="submit">开始捕捉</button>
+      </form>
+    </section>
+
+    <section class="workspace">
+      <aside>
+        <div class="panel-title">任务</div>
+        <div id="job-list" class="job-list"></div>
+      </aside>
+      <section class="detail">
+        <div id="empty-state" class="empty">提交一个链接后，这里会显示采集进度和结果。</div>
+        <div id="job-detail" class="hidden">
+          <div class="detail-head">
+            <div>
+              <h2 id="job-title"></h2>
+              <p id="job-url"></p>
+            </div>
+            <div class="detail-head-actions">
+              <a id="content-link" class="button compact-action" href="#" target="_blank">内容页</a>
+              <button id="copy-content-link" class="secondary-button compact-action" type="button">复制链接</button>
+            </div>
+          </div>
+          <div class="actions">
+            <div class="action-row compact-actions">
+              <a id="final-link" class="button secondary compact-action" href="#" target="_blank">查看 MD</a>
+              <a id="download-link" class="button compact-action" href="#">下载 MD</a>
+              <a id="danmaku-link" class="button secondary compact-action" href="#" target="_blank">弹幕 JSON</a>
+              <button id="stop-button" class="secondary-button danger-action compact-action" type="button">停止采集</button>
+              <button id="delete-button" class="secondary-button danger-action compact-action" type="button">删除任务</button>
+            </div>
+            <div class="action-row ai-actions">
+              <button id="gpt-button" type="button">AI 总结</button>
+              <button id="gpt-interaction-button" class="secondary-button" type="button">只总结互动</button>
+              <button id="gpt-settings-button" class="secondary-button" type="button">总结设置</button>
+            </div>
+          </div>
+          <div class="progress-log" id="progress-log"></div>
+          <section id="job-timeline" class="job-timeline hidden"></section>
+          <section id="capture-progress" class="capture-progress hidden"></section>
+          <section id="result-view" class="result-view hidden">
+            <div id="stats" class="stats"></div>
+            <div class="result-tabs" role="tablist" aria-label="结果视图">
+              <button class="tab active" type="button" data-tab="comments">评论</button>
+              <button class="tab" type="button" data-tab="transcript">转写</button>
+              <button class="tab" type="button" data-tab="danmaku">弹幕</button>
+              <button class="tab" type="button" data-tab="summary">AI 总结</button>
+            </div>
+            <section class="reader-section result-panel hidden" data-panel="transcript">
+              <h3>视频内容转写</h3>
+              <div id="transcript-list" class="transcript-list"></div>
+            </section>
+            <section class="reader-section result-panel" data-panel="comments">
+              <div class="section-head">
+                <h3>评论/讨论</h3>
+                <div class="segmented-control" aria-label="评论排序">
+                  <button class="comment-sort active" type="button" data-sort="page">页面顺序</button>
+                  <button class="comment-sort" type="button" data-sort="time">按时间</button>
+                  <button class="comment-sort" type="button" data-sort="like">按点赞</button>
+                </div>
+              </div>
+              <div id="comment-list" class="comment-list"></div>
+            </section>
+            <section class="reader-section result-panel hidden" data-panel="danmaku">
+              <h3>弹幕</h3>
+              <div id="danmaku-timeline" class="danmaku-timeline hidden"></div>
+              <div id="danmaku-list" class="danmaku-list"></div>
+            </section>
+            <section class="reader-section result-panel hidden" data-panel="summary">
+              <h3>AI 总结</h3>
+              <section class="summary hidden" id="summary-box">
+                <div class="summary-tools">
+                  <button id="copy-summary-md" class="secondary-button compact-action" type="button">拷贝 MD</button>
+                  <button id="copy-summary-text" class="secondary-button compact-action" type="button">拷贝纯文本</button>
+                  <button id="export-summary-pdf" class="secondary-button compact-action" type="button">导出 PDF</button>
+                </div>
+                <div id="summary-text" class="markdown-body"></div>
+              </section>
+              <div id="summary-empty" class="empty-inline summary-empty">
+                <span>还没有生成 AI 总结。</span>
+                <div class="summary-empty-actions">
+                  <button id="summary-empty-gpt" type="button">AI 总结</button>
+                  <button id="summary-empty-interaction" class="secondary-button" type="button">只总结互动</button>
+                </div>
+              </div>
+            </section>
+          </section>
+          <pre id="preview" class="hidden"></pre>
+        </div>
+      </section>
+    </section>
+  </main>
+  <div id="gpt-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="gpt-modal-title">
+    <div class="modal-panel">
+      <div class="modal-head">
+        <h2 id="gpt-modal-title">总结设置</h2>
+        <button id="gpt-modal-close" class="icon-button" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-grid">
+        <label>
+          详细程度
+          <select id="gpt-detail">
+            <option value="detailed">很详细</option>
+            <option value="medium" selected>中等</option>
+            <option value="brief">简略</option>
+          </select>
+        </label>
+        <label class="check-row"><input id="gpt-include-comments" type="checkbox" checked> 评论分析</label>
+        <label class="check-row"><input id="gpt-include-danmaku" type="checkbox" checked> 弹幕分析</label>
+        <label class="check-row"><input id="gpt-include-profile" type="checkbox" checked> 用户画像</label>
+      </div>
+      <label class="prompt-label">
+        默认 Prompt
+        <textarea id="gpt-prompt" rows="15"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button id="gpt-reset-prompt" class="secondary-button" type="button">恢复默认</button>
+        <button id="gpt-save-settings" type="button">保存设置</button>
+      </div>
+    </div>
+  </div>
+  <script src="/app.js?v=20260606-emote-render-all1"></script>
+</body>
+</html>

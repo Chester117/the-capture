@@ -1,0 +1,15 @@
+{
+  "name": "flyinglap-danmu-capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "tunnel": "node run_cloudflare_quick_tunnel.mjs",
+    "playwright:install": "npx playwright install chromium",
+    "playwright:check": "node scripts/check_playwright_chromium.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}
