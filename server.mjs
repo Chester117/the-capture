@@ -467,6 +467,7 @@ function readJobView(job) {
   const commentRows = Array.isArray(comments) ? comments : [];
   const danmakuRows = Array.isArray(danmaku) ? danmaku : [];
   return {
+    content: buildContentPreview(job, metadata),
     stats: {
       transcriptCount: transcriptRows.length,
       commentCount: commentRows.length,
@@ -490,6 +491,83 @@ function readJobView(job) {
       userHash: row.userHash || '',
     })),
   };
+}
+
+function normalizeMediaUrl(value) {
+  let url = String(value || '').trim();
+  if (!url) return '';
+  if (url.startsWith('//')) url = `https:${url}`;
+  if (url.startsWith('http://')) url = `https://${url.slice('http://'.length)}`;
+  return /^https?:\/\//i.test(url) ? url : '';
+}
+
+function xhsImageUrl(item) {
+  if (!item || typeof item !== 'object') return normalizeMediaUrl(item);
+  const list = Array.isArray(item.infoList) ? item.infoList : [];
+  const preferred = list.find((entry) => /DFT|ORIGIN|MAIN/i.test(entry?.imageScene || ''))
+    || list.find((entry) => entry?.url)
+    || {};
+  return normalizeMediaUrl(
+    item.urlDefault
+    || item.url_default
+    || preferred.url
+    || item.urlPre
+    || item.url_pre
+    || item.url
+  );
+}
+
+function readXhsBrowserNote(job) {
+  const capturePath = path.join(jobsDir, job.id, 'xhs_browser_capture.json');
+  const capture = readJsonFile(capturePath, null);
+  return capture?.pageState?.note || capture?.note || null;
+}
+
+function cleanXhsDesc(text) {
+  return String(text || '')
+    .replace(/#([^#[\]\s]+)\[话题\]#/g, '#$1')
+    .replace(/\[话题\]/g, '')
+    .trim();
+}
+
+function buildContentPreview(job, metadata = {}) {
+  const platform = job.platform || metadata.platform || '';
+  const content = {
+    platform,
+    title: metadata.title || job.title || '',
+    text: metadata.desc || metadata.description || '',
+    images: [],
+    cover: '',
+  };
+
+  if (platform === 'xiaohongshu' || isXiaohongshuUrl(job.url || '')) {
+    const browserNote = readXhsBrowserNote(job) || {};
+    const imageList = []
+      .concat(metadata.imageList || [])
+      .concat(metadata.images || [])
+      .concat(metadata.note?.imageList || [])
+      .concat(browserNote.imageList || []);
+    const seen = new Set();
+    content.title = browserNote.title || content.title;
+    content.text = cleanXhsDesc(browserNote.desc || content.text);
+    content.images = imageList
+      .map(xhsImageUrl)
+      .filter(Boolean)
+      .filter((url) => {
+        if (seen.has(url)) return false;
+        seen.add(url);
+        return true;
+      });
+    return content;
+  }
+
+  const cover = normalizeMediaUrl(metadata.pic || metadata.cover || metadata.thumbnail || metadata.thumbnail_url);
+  if (cover) {
+    content.cover = cover;
+    content.images = [cover];
+  }
+  content.text = metadata.desc || metadata.description || metadata.intro || '';
+  return content;
 }
 
 function publicComment(row) {

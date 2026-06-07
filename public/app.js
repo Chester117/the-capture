@@ -13,6 +13,7 @@ const jobTimeline = document.querySelector('#job-timeline');
 const captureProgress = document.querySelector('#capture-progress');
 const preview = document.querySelector('#preview');
 const resultView = document.querySelector('#result-view');
+const contentPreview = document.querySelector('#content-preview');
 const stats = document.querySelector('#stats');
 const transcriptList = document.querySelector('#transcript-list');
 const commentList = document.querySelector('#comment-list');
@@ -600,6 +601,58 @@ function renderStats(view) {
   }
 }
 
+function renderContentPreview(content) {
+  clear(contentPreview);
+  const text = String(content?.text || '').trim();
+  const images = Array.isArray(content?.images) ? content.images.filter(Boolean) : [];
+  const title = String(content?.title || '').trim();
+  const hasContent = Boolean(text || images.length);
+  contentPreview.classList.toggle('hidden', !hasContent);
+  if (!hasContent) return;
+
+  const head = document.createElement('div');
+  head.className = 'content-preview-head';
+  const heading = document.createElement('h3');
+  heading.textContent = '原帖内容';
+  const meta = document.createElement('span');
+  meta.textContent = images.length ? `${numberLabel(images.length)} 张图片` : '正文';
+  head.append(heading, meta);
+  contentPreview.appendChild(head);
+
+  if (title) {
+    const titleNode = document.createElement('strong');
+    titleNode.className = 'content-preview-title';
+    titleNode.textContent = title;
+    contentPreview.appendChild(titleNode);
+  }
+
+  if (text) {
+    const body = document.createElement('p');
+    body.className = 'content-preview-text';
+    body.textContent = text;
+    contentPreview.appendChild(body);
+  }
+
+  if (images.length) {
+    const grid = document.createElement('div');
+    grid.className = 'content-image-grid';
+    images.forEach((url, index) => {
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.title = `打开第 ${index + 1} 张原图`;
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = `${title || '原帖图片'} ${index + 1}`;
+      img.loading = 'lazy';
+      link.appendChild(img);
+      grid.appendChild(link);
+    });
+    contentPreview.appendChild(grid);
+  }
+}
+
 function timelineTime(value) {
   if (!value) return '';
   const date = new Date(value);
@@ -1102,6 +1155,7 @@ function renderJobView(job) {
     preview.textContent = job.preview || '';
     return;
   }
+  renderContentPreview(view.content || {});
   renderStats(view);
   renderTranscript(view.transcript || []);
   renderComments(view.comments || [], job);
