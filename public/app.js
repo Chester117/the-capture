@@ -1202,6 +1202,8 @@ function renderJobView(job) {
   resultView.classList.toggle('hidden', !view);
   preview.classList.toggle('hidden', Boolean(view) || !job.preview);
   if (!view) {
+    clear(contentPreview);
+    contentPreview.classList.add('hidden');
     preview.textContent = job.preview || '';
     return;
   }

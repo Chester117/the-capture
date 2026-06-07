@@ -517,6 +517,28 @@ function xhsImageUrl(item) {
   );
 }
 
+function xhsContentImageUrls(job, metadata = {}) {
+  const browserNote = readXhsBrowserNote(job) || {};
+  const imageList = []
+    .concat(metadata.imageList || [])
+    .concat(metadata.images || [])
+    .concat(metadata.note?.imageList || [])
+    .concat(browserNote.imageList || []);
+  const seen = new Set();
+  return imageList
+    .map(xhsImageUrl)
+    .filter(Boolean)
+    .filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+}
+
+function contentImageProxyUrl(job, index) {
+  return `/api/jobs/${encodeURIComponent(job.id)}/content-image?index=${index}`;
+}
+
 function readXhsBrowserNote(job) {
   const capturePath = path.join(jobsDir, job.id, 'xhs_browser_capture.json');
   const capture = readJsonFile(capturePath, null);
@@ -542,22 +564,11 @@ function buildContentPreview(job, metadata = {}) {
 
   if (platform === 'xiaohongshu' || isXiaohongshuUrl(job.url || '')) {
     const browserNote = readXhsBrowserNote(job) || {};
-    const imageList = []
-      .concat(metadata.imageList || [])
-      .concat(metadata.images || [])
-      .concat(metadata.note?.imageList || [])
-      .concat(browserNote.imageList || []);
-    const seen = new Set();
+    const imageUrls = xhsContentImageUrls(job, metadata);
     content.title = browserNote.title || content.title;
     content.text = cleanXhsDesc(browserNote.desc || content.text);
-    content.images = imageList
-      .map(xhsImageUrl)
-      .filter(Boolean)
-      .filter((url) => {
-        if (seen.has(url)) return false;
-        seen.add(url);
-        return true;
-      });
+    content.images = imageUrls.map((_, index) => contentImageProxyUrl(job, index));
+    content.originalImages = imageUrls;
     return content;
   }
 
@@ -2424,6 +2435,32 @@ const server = http.createServer(async (req, res) => {
           ? { 'Content-Disposition': contentDispositionFilename(name === 'final' ? markdownDownloadName(job) : path.basename(file)) }
           : {};
         return staticFile(res, file, name === 'json' ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8', headers);
+      }
+      if (req.method === 'GET' && action === 'content-image') {
+        const metadata = job.outputs?.metadata ? readJsonFile(job.outputs.metadata, {}) : {};
+        const images = xhsContentImageUrls(job, metadata);
+        const index = Math.max(0, Number(url.searchParams.get('index') || 0));
+        const imageUrl = images[index];
+        if (!imageUrl) return json(res, 404, { ok: false, error: 'image not found' });
+        const response = await fetch(imageUrl, {
+          headers: {
+            'User-Agent': UA,
+            Referer: job.url || 'https://www.xiaohongshu.com/',
+            Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          },
+        });
+        if (!response.ok) {
+          const text = await response.text().catch(() => '');
+          return json(res, response.status, { ok: false, error: `image fetch failed: ${response.status} ${text.slice(0, 120)}` });
+        }
+        const body = Buffer.from(await response.arrayBuffer());
+        res.writeHead(200, {
+          'Content-Type': response.headers.get('content-type') || 'image/webp',
+          'Content-Length': body.length,
+          'Cache-Control': 'public, max-age=3600',
+        });
+        res.end(body);
+        return;
       }
       if (req.method === 'GET' && action === 'summary-pdf') {
         const file = await summaryPdfPath(job);

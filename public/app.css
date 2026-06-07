@@ -460,6 +460,7 @@ aside { padding: 12px; overflow: hidden; }
   padding: 12px;
   display: grid;
   gap: 10px;
+  margin: 10px 0 12px;
 }
 .content-preview-head {
   display: flex;
