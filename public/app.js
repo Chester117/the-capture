@@ -422,10 +422,10 @@ function platformKey(platform = '') {
 
 function platformLogo(platform = '') {
   const logos = {
-    bilibili: '/assets/platforms/bilibili.svg',
-    xiaohongshu: '/assets/platforms/xiaohongshu.svg',
-    xiaoyuzhou: '/assets/platforms/xiaoyuzhou.svg',
-    youtube: '/assets/platforms/youtube.svg',
+    bilibili: '/assets/platforms/bilibili.png',
+    xiaohongshu: '/assets/platforms/xiaohongshu.png',
+    xiaoyuzhou: '/assets/platforms/xiaoyuzhou.png',
+    youtube: '/assets/platforms/youtube.png',
   };
   return logos[platformKey(platform)] || '';
 }
@@ -1235,6 +1235,10 @@ function renderJobs() {
       logo.src = logoSrc;
       logo.alt = job.platform || 'platform';
       logo.loading = 'lazy';
+      logo.addEventListener('error', () => {
+        logo.remove();
+        item.classList.add('no-logo');
+      }, { once: true });
       item.appendChild(logo);
     }
     const body = document.createElement('div');
