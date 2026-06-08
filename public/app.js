@@ -2,6 +2,7 @@ const form = document.querySelector('#capture-form');
 const urlInput = document.querySelector('#url-input');
 const pasteButton = document.querySelector('#paste-button');
 const transcribeToggle = document.querySelector('#transcribe-toggle');
+const platformFilter = document.querySelector('#platform-filter');
 const jobList = document.querySelector('#job-list');
 const emptyState = document.querySelector('#empty-state');
 const jobDetail = document.querySelector('#job-detail');
@@ -46,16 +47,19 @@ const copySummaryMd = document.querySelector('#copy-summary-md');
 const copySummaryText = document.querySelector('#copy-summary-text');
 const exportSummaryPdf = document.querySelector('#export-summary-pdf');
 const commentSortButtons = document.querySelectorAll('.comment-sort');
+const imageLightbox = document.querySelector('#image-lightbox');
+const imageLightboxImg = document.querySelector('#image-lightbox-img');
+const imageLightboxClose = document.querySelector('#image-lightbox-close');
 
 let jobs = [];
 let selectedId = '';
 let activeTab = 'comments';
+let platformFilterValue = localStorage.getItem('the_capture_platform_filter') || 'all';
 let commentSort = localStorage.getItem('flyinglap_comment_sort') || 'page';
 let commentSortLoading = '';
 const summaryDrafts = new Map();
 const progressDisplay = new Map();
 const collapsedComments = new Map();
-const timelineScrollPositions = new Map();
 let selectedJobSnapshot = null;
 let currentSummaryMarkdown = '';
 let knownEmotes = new Map();
@@ -67,16 +71,18 @@ const DEFAULT_GPT_PROMPT = [
   '3. 评论分析：给出评论区主要观点、分歧、情绪倾向、典型高赞/高信息密度评论，并尽量估算占比。',
   '4. 弹幕分析：如果有弹幕，说明整体热度、时间轴变化、主要 spike 发生在什么时间段，以及 spike 里大家主要在说什么。',
   '5. 用户画像：如数据可用，分析账号新旧/等级、男女比例、粉丝牌或其他用户字段；没有数据就明确说明缺失，不要猜。',
-  '6. 定量摘要：列出视频转写段落数、评论数、主评论数、弹幕数、弹幕峰值时间段等关键数字。',
-  '7. 可行动结论：给内容运营/研究/二创的建议，包含标题方向、可引用金句、后续值得追问的问题。',
+  '6. 定量摘要：用 Markdown 表格列出视频转写段落数、评论数、主评论数、弹幕数、弹幕峰值时间段等关键数字。',
   '写得具体、可读，避免空泛套话。',
 ].join('\n');
+const storedGptPrompt = localStorage.getItem('flyinglap_gpt_prompt') || '';
+const initialGptPrompt = storedGptPrompt.includes('可行动结论') ? DEFAULT_GPT_PROMPT : (storedGptPrompt || DEFAULT_GPT_PROMPT);
+if (storedGptPrompt && storedGptPrompt !== initialGptPrompt) localStorage.setItem('flyinglap_gpt_prompt', initialGptPrompt);
 const gptSettings = {
   detail: localStorage.getItem('flyinglap_gpt_detail') || 'medium',
   includeComments: localStorage.getItem('flyinglap_gpt_comments') !== '0',
   includeDanmaku: localStorage.getItem('flyinglap_gpt_danmaku') !== '0',
   includeProfile: localStorage.getItem('flyinglap_gpt_profile') !== '0',
-  prompt: localStorage.getItem('flyinglap_gpt_prompt') || DEFAULT_GPT_PROMPT,
+  prompt: initialGptPrompt,
 };
 
 async function api(path, options) {
@@ -314,7 +320,52 @@ function renderMarkdown(node, markdown) {
     list.appendChild(li);
   }
 
-  for (const line of lines) {
+  function isTableRow(value) {
+    return /^\s*\|.+\|\s*$/.test(value || '');
+  }
+
+  function isTableSeparator(value) {
+    const cells = String(value || '').trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+    return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  }
+
+  function tableCells(value) {
+    return String(value || '').trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+  }
+
+  function appendTable(startIndex) {
+    const headers = tableCells(lines[startIndex]);
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    for (const header of headers) {
+      const th = document.createElement('th');
+      appendInlineMarkdown(th, header);
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    let index = startIndex + 2;
+    while (index < lines.length && isTableRow(lines[index])) {
+      const tr = document.createElement('tr');
+      const cells = tableCells(lines[index]);
+      for (let cellIndex = 0; cellIndex < headers.length; cellIndex += 1) {
+        const td = document.createElement('td');
+        appendInlineMarkdown(td, cells[cellIndex] || '');
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+      index += 1;
+    }
+    table.appendChild(tbody);
+    node.appendChild(table);
+    return index - 1;
+  }
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
     const trimmed = line.trim();
     if (code) {
       if (/^```/.test(trimmed)) {
@@ -349,6 +400,12 @@ function renderMarkdown(node, markdown) {
       const h = document.createElement(`h${Math.min(4, heading[1].length + 1)}`);
       appendInlineMarkdown(h, heading[2]);
       node.appendChild(h);
+      continue;
+    }
+    if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      flushParagraph();
+      flushList();
+      i = appendTable(i);
       continue;
     }
     const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
@@ -440,6 +497,17 @@ function platformLogoForJob(job) {
   if (/xiaohongshu\.com|xhslink\.com|xhsurl\.com/i.test(url)) return platformLogo('xiaohongshu');
   if (/xiaoyuzhoufm\.com|podcaster\.xiaoyuzhoufm\.com/i.test(url)) return platformLogo('xiaoyuzhou');
   return '';
+}
+
+function platformKeyForJob(job) {
+  const fromPlatform = platformKey(job?.platform || '');
+  if (['bilibili', 'xiaohongshu', 'xiaoyuzhou', 'youtube'].includes(fromPlatform)) return fromPlatform;
+  const url = String(job?.url || '');
+  if (/youtube\.com|youtu\.be/i.test(url)) return 'youtube';
+  if (/bilibili\.com|b23\.tv/i.test(url)) return 'bilibili';
+  if (/xiaohongshu\.com|xhslink\.com|xhsurl\.com/i.test(url)) return 'xiaohongshu';
+  if (/xiaoyuzhoufm\.com|podcaster\.xiaoyuzhoufm\.com/i.test(url)) return 'xiaoyuzhou';
+  return fromPlatform;
 }
 
 async function copyText(value, button, doneText = '已复制') {
@@ -669,20 +737,33 @@ function renderContentPreview(content) {
     const grid = document.createElement('div');
     grid.className = 'content-image-grid';
     images.forEach((url, index) => {
-      const link = document.createElement('a');
-      link.href = url;
-      link.target = '_blank';
-      link.rel = 'noreferrer';
-      link.title = `打开第 ${index + 1} 张原图`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'content-image-button';
+      button.title = `放大第 ${index + 1} 张原图`;
       const img = document.createElement('img');
       img.src = url;
       img.alt = `${title || '原帖图片'} ${index + 1}`;
       img.loading = 'lazy';
-      link.appendChild(img);
-      grid.appendChild(link);
+      button.appendChild(img);
+      button.addEventListener('click', () => openImageLightbox(url, img.alt));
+      grid.appendChild(button);
     });
     contentPreview.appendChild(grid);
   }
+}
+
+function openImageLightbox(src, alt = '原帖图片放大预览') {
+  imageLightboxImg.src = src;
+  imageLightboxImg.alt = alt;
+  imageLightbox.classList.remove('hidden');
+  document.body.classList.add('lightbox-open');
+}
+
+function closeImageLightbox() {
+  imageLightbox.classList.add('hidden');
+  imageLightboxImg.removeAttribute('src');
+  document.body.classList.remove('lightbox-open');
 }
 
 function timelineTime(value) {
@@ -703,8 +784,6 @@ function normalizeClockText(value) {
 }
 
 function renderJobTimeline(job) {
-  const previousList = jobTimeline.querySelector('.job-timeline-list');
-  if (previousList && job?.id) timelineScrollPositions.set(job.id, previousList.scrollLeft);
   clear(jobTimeline);
   const events = (job?.timeline || []).filter((event) => event?.label || event?.type);
   jobTimeline.classList.toggle('hidden', !events.length);
@@ -717,13 +796,13 @@ function renderJobTimeline(job) {
   const count = events.length;
   const availableWidth = Math.max(0, jobTimeline.clientWidth - 28);
   const itemWidth = Math.max(156, Math.floor(availableWidth / Math.max(1, count)));
-  const previousScroll = job?.id ? Number(timelineScrollPositions.get(job.id) || 0) : 0;
   list.style.setProperty('--timeline-count', String(Math.max(1, count)));
   list.style.setProperty('--timeline-item-width', `${itemWidth}px`);
   list.style.gridTemplateColumns = `repeat(${Math.max(1, count)}, ${itemWidth}px)`;
-  list.addEventListener('scroll', () => {
-    if (job?.id) timelineScrollPositions.set(job.id, list.scrollLeft);
-  }, { passive: true });
+  let activeIndex = -1;
+  events.forEach((event, index) => {
+    if (event.status === 'running' && !/^开始/.test(event.label || '')) activeIndex = index;
+  });
   for (const [index, event] of events.entries()) {
     if (index < events.length - 1) {
       const nextStatus = events[index + 1]?.status || '';
@@ -734,7 +813,7 @@ function renderJobTimeline(job) {
       list.appendChild(segment);
     }
     const item = document.createElement('div');
-    item.className = `job-timeline-item ${event.status || 'pending'}`;
+    item.className = `job-timeline-item ${event.status || 'pending'}${index === activeIndex ? ' is-active' : ''}`;
     const dot = document.createElement('span');
     dot.className = 'job-timeline-dot';
     if (index < events.length - 1) {
@@ -758,8 +837,10 @@ function renderJobTimeline(job) {
     list.appendChild(item);
   }
   jobTimeline.append(title, list);
-  list.scrollLeft = previousScroll;
-  requestAnimationFrame(() => { list.scrollLeft = previousScroll; });
+  requestAnimationFrame(() => {
+    list.scrollLeft = list.scrollWidth;
+    requestAnimationFrame(() => { list.scrollLeft = list.scrollWidth; });
+  });
 }
 
 function renderCaptureProgress(job) {
@@ -1227,7 +1308,15 @@ function activateTab(name) {
 
 function renderJobs() {
   jobList.innerHTML = '';
-  for (const job of jobs) {
+  const visible = platformFilterValue === 'all' ? jobs : jobs.filter((job) => platformKeyForJob(job) === platformFilterValue);
+  if (!visible.length) {
+    const empty = document.createElement('div');
+    empty.className = 'job-list-empty';
+    empty.textContent = '这个平台暂时没有任务。';
+    jobList.appendChild(empty);
+    return;
+  }
+  for (const job of visible) {
     const item = document.createElement('button');
     item.type = 'button';
     const logoSrc = platformLogoForJob(job);
@@ -1257,15 +1346,24 @@ function renderJobs() {
   }
 }
 
-async function loadJobs() {
+function restoreWindowScroll(x, y) {
+  requestAnimationFrame(() => {
+    window.scrollTo(x, y);
+    requestAnimationFrame(() => window.scrollTo(x, y));
+  });
+}
+
+async function loadJobs({ preserveScroll = false } = {}) {
   const body = await api('/api/jobs');
   jobs = body.jobs || [];
   if (!selectedId && jobs.length) selectedId = jobs[0].id;
   renderJobs();
-  if (selectedId) await loadJob(selectedId);
+  if (selectedId) await loadJob(selectedId, { preserveScroll });
 }
 
-async function loadJob(id) {
+async function loadJob(id, { preserveScroll = false } = {}) {
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
   selectedId = id;
   renderJobs();
   const { job } = await api(`/api/jobs/${id}`);
@@ -1307,6 +1405,7 @@ async function loadJob(id) {
   summaryEmpty.classList.toggle('hidden', Boolean(summary));
   summaryBox.classList.toggle('error', Boolean(localSummary?.startsWith('总结失败：')));
   renderMarkdown(summaryText, summary);
+  if (preserveScroll) restoreWindowScroll(scrollX, scrollY);
 }
 
 async function selectJob(id) {
@@ -1488,12 +1587,23 @@ gptModal.addEventListener('click', (event) => {
   if (event.target === gptModal) closeGptModal();
 });
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !imageLightbox.classList.contains('hidden')) closeImageLightbox();
   if (event.key === 'Escape') closeGptModal();
 });
+imageLightboxClose.addEventListener('click', closeImageLightbox);
+imageLightbox.addEventListener('click', (event) => {
+  if (event.target === imageLightbox) closeImageLightbox();
+});
 syncGptSettingsForm();
+platformFilter.value = platformFilterValue;
+platformFilter.addEventListener('change', () => {
+  platformFilterValue = platformFilter.value || 'all';
+  localStorage.setItem('the_capture_platform_filter', platformFilterValue);
+  renderJobs();
+});
 
 setInterval(() => {
-  loadJobs().catch(() => {});
+  loadJobs({ preserveScroll: true }).catch(() => {});
 }, 2500);
 
 setInterval(() => {

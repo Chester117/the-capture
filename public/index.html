@@ -6,7 +6,7 @@
   <title>The-Capture</title>
   <link rel="icon" href="/assets/brand/the-capture-logo.png?v=20260607-real-logo1" type="image/png">
   <link rel="apple-touch-icon" href="/assets/brand/the-capture-logo.png?v=20260607-real-logo1">
-  <link rel="stylesheet" href="/app.css?v=20260607-content-image-proxy1">
+  <link rel="stylesheet" href="/app.css?v=20260608-ui-interactions1">
 </head>
 <body>
   <main class="shell">
@@ -37,7 +37,19 @@
 
     <section class="workspace">
       <aside>
-        <div class="panel-title">任务</div>
+        <div class="panel-head">
+          <div class="panel-title">任务</div>
+          <label class="platform-filter-label">
+            <span>平台</span>
+            <select id="platform-filter">
+              <option value="all">全部平台</option>
+              <option value="bilibili">B 站</option>
+              <option value="xiaohongshu">小红书</option>
+              <option value="xiaoyuzhou">小宇宙</option>
+              <option value="youtube">YouTube</option>
+            </select>
+          </label>
+        </div>
         <div id="job-list" class="job-list"></div>
       </aside>
       <section class="detail">
@@ -152,6 +164,10 @@
       </div>
     </div>
   </div>
-  <script src="/app.js?v=20260607-content-image-proxy1"></script>
+  <div id="image-lightbox" class="image-lightbox hidden" role="dialog" aria-modal="true" aria-label="原帖图片预览">
+    <button id="image-lightbox-close" class="image-lightbox-close" type="button" aria-label="关闭">×</button>
+    <img id="image-lightbox-img" alt="原帖图片放大预览">
+  </div>
+  <script src="/app.js?v=20260608-ui-interactions1"></script>
 </body>
 </html>

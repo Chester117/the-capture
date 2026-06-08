@@ -2185,7 +2185,7 @@ async function gptSummary(job, options = {}) {
   const includeProfile = options.includeProfile !== false;
   const userPrompt = String(options.prompt || '').trim() || [
     '你是中文内容分析助手。请只基于给定采集数据，不编造外部事实。',
-    '输出 Markdown，必须覆盖：overview、内容总结、评论分析、弹幕分析、用户画像、定量摘要、可行动结论。',
+    '输出 Markdown，必须覆盖：overview、内容总结、评论分析、弹幕分析、用户画像、定量摘要。定量摘要必须用 Markdown 表格呈现。',
     '如果某项数据缺失，请明确说明缺失。',
   ].join('\n');
   const compactComments = Array.isArray(comments)
