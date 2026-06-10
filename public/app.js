@@ -473,6 +473,7 @@ function platformKey(platform = '') {
   if (value.includes('xiaohongshu') || value.includes('rednote')) return 'xiaohongshu';
   if (value.includes('xiaoyuzhou') || value.includes('cosmos')) return 'xiaoyuzhou';
   if (value.includes('youtube') || value === 'yt') return 'youtube';
+  if (value.includes('weibo') || value.includes('微博')) return 'weibo';
   if (value.includes('bilibili') || value.includes('b站')) return 'bilibili';
   return value || 'generic';
 }
@@ -484,6 +485,7 @@ function platformLogo(platform = '') {
     xiaohongshu: `/assets/platforms/xiaohongshu.png?${version}`,
     xiaoyuzhou: `/assets/platforms/xiaoyuzhou.png?${version}`,
     youtube: `/assets/platforms/youtube.png?${version}`,
+    weibo: `/assets/platforms/weibo.svg?${version}`,
   };
   return logos[platformKey(platform)] || '';
 }
@@ -496,17 +498,19 @@ function platformLogoForJob(job) {
   if (/bilibili\.com|b23\.tv/i.test(url)) return platformLogo('bilibili');
   if (/xiaohongshu\.com|xhslink\.com|xhsurl\.com/i.test(url)) return platformLogo('xiaohongshu');
   if (/xiaoyuzhoufm\.com|podcaster\.xiaoyuzhoufm\.com/i.test(url)) return platformLogo('xiaoyuzhou');
+  if (/weibo\.com|weibo\.cn|t\.cn/i.test(url)) return platformLogo('weibo');
   return '';
 }
 
 function platformKeyForJob(job) {
   const fromPlatform = platformKey(job?.platform || '');
-  if (['bilibili', 'xiaohongshu', 'xiaoyuzhou', 'youtube'].includes(fromPlatform)) return fromPlatform;
+  if (['bilibili', 'xiaohongshu', 'xiaoyuzhou', 'youtube', 'weibo'].includes(fromPlatform)) return fromPlatform;
   const url = String(job?.url || '');
   if (/youtube\.com|youtu\.be/i.test(url)) return 'youtube';
   if (/bilibili\.com|b23\.tv/i.test(url)) return 'bilibili';
   if (/xiaohongshu\.com|xhslink\.com|xhsurl\.com/i.test(url)) return 'xiaohongshu';
   if (/xiaoyuzhoufm\.com|podcaster\.xiaoyuzhoufm\.com/i.test(url)) return 'xiaoyuzhou';
+  if (/weibo\.com|weibo\.cn|t\.cn/i.test(url)) return 'weibo';
   return fromPlatform;
 }
 

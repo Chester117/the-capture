@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Weibo">
+  <rect width="128" height="128" rx="28" fill="#e6162d"/>
+  <circle cx="80" cy="38" r="8" fill="#ffcc33"/>
+  <path d="M88 18c16 3 25 13 28 29" fill="none" stroke="#ffcc33" stroke-width="8" stroke-linecap="round"/>
+  <path d="M87 31c8 3 13 8 15 17" fill="none" stroke="#ffcc33" stroke-width="6" stroke-linecap="round"/>
+  <ellipse cx="58" cy="72" rx="39" ry="28" fill="#fff"/>
+  <ellipse cx="49" cy="70" rx="14" ry="11" fill="#1f242b"/>
+  <ellipse cx="76" cy="67" rx="9" ry="8" fill="#1f242b"/>
+  <circle cx="45" cy="66" r="4" fill="#fff"/>
+  <path d="M37 86c13 10 35 10 49-2" fill="none" stroke="#1f242b" stroke-width="5" stroke-linecap="round"/>
+</svg>

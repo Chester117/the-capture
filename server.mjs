@@ -71,6 +71,12 @@ function localTime(ts) {
   return new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 19);
 }
 
+function isoLocalTime(value) {
+  const ms = Date.parse(value || '');
+  if (!Number.isFinite(ms)) return '';
+  return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+}
+
 function hms(sec) {
   sec = Math.max(0, Math.floor(Number(sec) || 0));
   const h = Math.floor(sec / 3600);
@@ -341,7 +347,7 @@ function interactionStats(metadata = {}, platform = '', comments = [], danmaku =
     likeCount: firstNumeric(stat.like, metadata.like_count, metadata.likeCount, metadata.likedCount, interact.liked_count, interact.likedCount, interact.likeCount, xhsCounters.likeCount),
     coinCount: firstNumeric(stat.coin, metadata.coin_count, metadata.coinCount),
     favoriteCount: firstNumeric(stat.favorite, metadata.favorite_count, metadata.favoriteCount, metadata.collectedCount, interact.collected_count, interact.collectedCount, interact.collectCount, xhsCounters.favoriteCount),
-    shareCount: firstNumeric(stat.share, metadata.share_count, metadata.shareCount, metadata.sharedCount, interact.share_count, interact.shareCount, xhsCounters.shareCount),
+    shareCount: firstNumeric(stat.share, metadata.share_count, metadata.shareCount, metadata.sharedCount, metadata.repostCount, metadata.reposts_count, interact.share_count, interact.shareCount, xhsCounters.shareCount),
     commentCount: firstNumeric(stat.reply, metadata.commentCount, metadata.comment_count, interact.comment_count, interact.commentCount, xhsCounters.commentCount, Array.isArray(comments) ? comments.length : undefined),
     danmakuCount: firstNumeric(stat.danmaku, metadata.danmakuCount, Array.isArray(danmaku) ? danmaku.length : undefined),
     platform: platform || metadata.platform || '',
@@ -565,8 +571,20 @@ function contentImageUrls(job, metadata = {}) {
   if (platform === 'xiaohongshu' || isXiaohongshuUrl(job.url || '')) {
     return xhsContentImageUrls(job, metadata);
   }
-  const cover = normalizeMediaUrl(metadata.pic || metadata.cover || metadata.thumbnail || metadata.thumbnail_url);
-  return cover ? [cover] : [];
+  const imageList = []
+    .concat(metadata.images || [])
+    .concat(metadata.imageList || [])
+    .concat(metadata.pics || [])
+    .concat(metadata.pic_infos ? Object.values(metadata.pic_infos).map((item) => item?.large?.url || item?.original?.url || item?.url) : [])
+    .map((item) => normalizeMediaUrl(typeof item === 'string' ? item : item?.url || item?.picUrl || item?.largePicUrl || item?.large?.url || item?.original?.url))
+    .filter(Boolean);
+  const cover = normalizeMediaUrl(metadata.pic || metadata.cover || metadata.thumbnail || metadata.thumbnail_url || metadata.image?.picUrl || metadata.podcast?.image?.picUrl);
+  const seen = new Set();
+  return [cover, ...imageList].filter(Boolean).filter((url) => {
+    if (seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
 }
 
 function readXhsBrowserNote(job) {
@@ -608,7 +626,7 @@ function buildContentPreview(job, metadata = {}) {
     content.images = imageUrls.map((_, index) => contentImageProxyUrl(job, index));
     content.originalImages = imageUrls;
   }
-  content.text = metadata.desc || metadata.description || metadata.intro || '';
+  content.text = metadata.desc || metadata.description || metadata.intro || metadata.shownotes || '';
   return content;
 }
 
@@ -901,6 +919,14 @@ async function readXhsCookieHeader() {
   }
 }
 
+async function readOptionalCookieHeader(name) {
+  try {
+    return (await fs.readFile(path.join(repoRoot, `auth/${name}-cookie-header.txt`), 'utf8')).trim();
+  } catch {
+    return '';
+  }
+}
+
 function getMixinKey(orig) {
   return MIXIN_KEY_ENC_TAB.map((n) => orig[n]).join('').slice(0, 32);
 }
@@ -949,7 +975,9 @@ async function resolveInputUrl(input) {
       || host === 'xhslink.com'
       || host.endsWith('.xhslink.com')
       || host === 'xhsurl.com'
-      || host.endsWith('.xhsurl.com');
+      || host.endsWith('.xhsurl.com')
+      || host === 't.cn'
+      || host.endsWith('.t.cn');
     if (!shouldExpand) break;
     const response = await fetch(current, {
       method: 'GET',
@@ -978,11 +1006,47 @@ function xhsNoteId(url) {
   return match ? decodeURIComponent(match[1]) : '';
 }
 
+function isXiaoyuzhouUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host.includes('xiaoyuzhoufm.com') || host.includes('xyzcdn.net');
+  } catch {
+    return false;
+  }
+}
+
+function xiaoyuzhouEpisodeId(url) {
+  const text = String(url || '');
+  const match = text.match(/\/episode\/([0-9a-fA-F]{16,32})/) || text.match(/[?&]eid=([0-9a-fA-F]{16,32})/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function isWeiboUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host.includes('weibo.com') || host.includes('weibo.cn') || host === 't.cn' || host.endsWith('.t.cn');
+  } catch {
+    return false;
+  }
+}
+
+function weiboStatusId(url) {
+  const text = String(url || '');
+  const match = text.match(/(?:status|detail)\/([A-Za-z0-9]+)/)
+    || text.match(/weibo\.com\/\d+\/([A-Za-z0-9]+)/)
+    || text.match(/[?&](?:id|mid)=([A-Za-z0-9]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 function contentKey(inputUrl) {
   const bvid = bilibiliBvid(inputUrl);
   if (bvid) return `bilibili:${bvid}`;
   const noteId = xhsNoteId(inputUrl);
   if (noteId) return `xiaohongshu:${noteId}`;
+  const xyzEpisodeId = xiaoyuzhouEpisodeId(inputUrl);
+  if (xyzEpisodeId) return `xiaoyuzhou:${xyzEpisodeId}`;
+  const weiboId = weiboStatusId(inputUrl);
+  if (weiboId && isWeiboUrl(inputUrl)) return `weibo:${weiboId}`;
   try {
     const parsed = new URL(inputUrl);
     parsed.hash = '';
@@ -1224,6 +1288,236 @@ async function writeComments(jobDir, comments) {
   ].join('\n');
   await fs.writeFile(path.join(jobDir, 'comments_all.tsv'), tsv);
   return deduped;
+}
+
+function htmlText(value) {
+  return decodeHtml(String(value || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\u200b/g, '')
+    .trim());
+}
+
+function extractNextData(html) {
+  const match = String(html || '').match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!match) return null;
+  return JSON.parse(match[1]);
+}
+
+function xyzPictureUrl(picture = {}) {
+  return picture.largePicUrl || picture.middlePicUrl || picture.picUrl || picture.thumbnailUrl || '';
+}
+
+function xiaoyuzhouCommentRow(row, level = 0, root = '') {
+  const author = row.author || {};
+  const badges = Array.isArray(row.badges) ? row.badges.map((badge) => badge.tip || '').filter(Boolean).join('；') : '';
+  return {
+    level,
+    rpid: String(row.id || ''),
+    root: root || String(row.thread || ''),
+    parent: String(row.replyToComment?.id || row.thread || root || ''),
+    user: author.nickname || '',
+    mid: String(author.uid || ''),
+    sex: author.gender || '',
+    sign: author.bio || '',
+    avatar: xyzPictureUrl(author.avatar?.picture || {}),
+    userLevel: '',
+    fansMedal: badges,
+    location: row.ipLoc || author.ipLoc || '',
+    time: isoLocalTime(row.createdAt),
+    like: row.likeCount || 0,
+    child_count: row.replyCount || row.threadReplyCount || 0,
+    message: row.text || '',
+  };
+}
+
+function xiaoyuzhouRows(comments = []) {
+  const out = [];
+  for (const row of comments || []) {
+    const root = xiaoyuzhouCommentRow(row, 0);
+    out.push(root);
+    for (const reply of row.replies || []) out.push(xiaoyuzhouCommentRow(reply, 1, root.rpid));
+  }
+  return out;
+}
+
+async function collectXiaoyuzhou(job, jobDir) {
+  job.platform = 'xiaoyuzhou';
+  const eid = xiaoyuzhouEpisodeId(job.url);
+  if (!eid) throw new Error('没有识别到小宇宙 episode id');
+  log(job, '读取小宇宙页面内容和评论');
+  const cookie = await readOptionalCookieHeader('xiaoyuzhou');
+  const response = await fetch(`https://www.xiaoyuzhoufm.com/episode/${encodeURIComponent(eid)}`, {
+    headers: {
+      'User-Agent': UA,
+      Accept: 'text/html,application/xhtml+xml',
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+  });
+  const html = await response.text();
+  if (!response.ok) throw new Error(`小宇宙页面读取失败 ${response.status}: ${html.slice(0, 160)}`);
+  const nextData = extractNextData(html);
+  const episode = nextData?.props?.pageProps?.episode || {};
+  const initialComments = nextData?.props?.pageProps?.comments || [];
+  const podcast = episode.podcast || {};
+  const metadata = {
+    ...episode,
+    platform: 'xiaoyuzhou',
+    eid,
+    sourceUrl: job.url,
+    title: episode.title || decodeHtml(html.match(/<meta property="og:title" content="([^"]*)"/)?.[1] || ''),
+    desc: htmlText(episode.description || episode.shownotes || ''),
+    shownotes: htmlText(episode.shownotes || ''),
+    podcastTitle: podcast.title || '',
+    pic: episode.image?.picUrl || podcast.image?.picUrl || html.match(/<meta property="og:image" content="([^"]*)"/)?.[1] || '',
+    playCount: episode.playCount,
+    commentCount: episode.commentCount,
+    likeCount: episode.likeCount,
+    favoriteCount: episode.favoriteCount || episode.subscriptionCount,
+    shareCount: episode.shareCount,
+    audioUrl: episode.enclosure?.url || html.match(/<meta property="og:audio" content="([^"]*)"/)?.[1] || '',
+  };
+  job.title = metadata.title || `小宇宙 ${eid}`;
+  await fs.writeFile(path.join(jobDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+  await fs.writeFile(path.join(jobDir, 'xiaoyuzhou_next_data.json'), JSON.stringify(nextData?.props?.pageProps || {}, null, 2));
+  let comments = await writeComments(jobDir, xiaoyuzhouRows(initialComments));
+  markTimeline(job, 'interaction-done', '互动采集完成', 'done', `${comments.length} 条评论/回复`);
+
+  let transcript = [];
+  const notes = [
+    '已解析小宇宙公开页面 __NEXT_DATA__ 中的节目内容、互动数、首屏评论和回复。',
+    metadata.commentCount && comments.length < Number(metadata.commentCount)
+      ? `页面显示评论数 ${metadata.commentCount}；公开首屏携带 ${comments.length} 条评论/回复，后续分页接口仍需继续补强。`
+      : `页面显示评论数 ${metadata.commentCount || comments.length}；本次采集 ${comments.length} 条评论/回复。`,
+  ].filter(Boolean);
+  if (job.transcribeVideo !== false && metadata.audioUrl) {
+    try {
+      log(job, '下载小宇宙音频');
+      const audioPath = path.join(jobDir, `${eid}_audio.m4a`);
+      await downloadFile(metadata.audioUrl, audioPath, { Referer: job.url, Origin: 'https://www.xiaoyuzhoufm.com' });
+      transcript = await transcribeAudio(job, audioPath, jobDir);
+    } catch (error) {
+      log(job, `小宇宙音频下载/转写失败：${error.message.slice(0, 240)}`);
+    }
+  } else if (job.transcribeVideo === false) {
+    log(job, '已关闭视频转写，跳过小宇宙音频下载和 ASR');
+    markTimeline(job, 'transcribe-skipped', '跳过音频转写', 'done', '本次关闭转写视频');
+    const existingTranscript = readJsonFile(transcriptPath(job), []);
+    if (Array.isArray(existingTranscript) && existingTranscript.length) {
+      transcript = existingTranscript;
+      notes.push(`本次关闭音频转写，已复用已有转写 ${existingTranscript.length} 段。`);
+    }
+  }
+  return buildFinalMarkdown(jobDir, {
+    job,
+    sourceUrl: job.url,
+    title: metadata.title || job.url,
+    platform: 'xiaoyuzhou',
+    metadata,
+    transcript,
+    comments,
+    danmaku: [],
+    notes,
+  });
+}
+
+function weiboCommentRow(row, level = 0, root = '') {
+  const user = row.user || {};
+  return {
+    level,
+    rpid: String(row.id || row.idstr || ''),
+    root,
+    parent: root,
+    user: user.screen_name || '',
+    mid: String(user.id || user.idstr || ''),
+    sex: user.gender || '',
+    sign: user.description || '',
+    avatar: user.avatar_hd || user.profile_image_url || '',
+    userLevel: user.mbrank || user.urank || '',
+    fansMedal: user.verified_reason || '',
+    location: user.location || '',
+    time: row.created_at ? isoLocalTime(row.created_at) : '',
+    like: row.like_count || row.likes_count || 0,
+    child_count: row.total_number || 0,
+    message: htmlText(row.text || row.text_raw || ''),
+  };
+}
+
+async function fetchWeiboJson(url, headers = {}) {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': UA,
+      Accept: 'application/json, text/plain, */*',
+      Referer: 'https://m.weibo.cn/',
+      'MWeibo-Pwa': '1',
+      ...headers,
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 160)}`);
+  const payload = JSON.parse(text);
+  if (payload.ok === 0) throw new Error(payload.msg || payload.message || '微博接口返回失败');
+  return payload.data ?? payload;
+}
+
+async function collectWeibo(job, jobDir) {
+  job.platform = 'weibo';
+  const id = weiboStatusId(job.url);
+  if (!id) throw new Error('没有识别到微博 status id');
+  log(job, '读取微博正文和互动数据');
+  const cookie = await readOptionalCookieHeader('weibo');
+  const headers = cookie ? { Cookie: cookie } : {};
+  const status = await fetchWeiboJson(`https://m.weibo.cn/statuses/show?id=${encodeURIComponent(id)}`, headers);
+  const metadata = {
+    ...status,
+    platform: 'weibo',
+    sourceUrl: job.url,
+    title: htmlText(status.text_raw || status.text || '').slice(0, 80) || `微博 ${id}`,
+    desc: htmlText(status.text_raw || status.text || ''),
+    commentCount: status.comments_count,
+    repostCount: status.reposts_count,
+    shareCount: status.reposts_count,
+    likeCount: status.attitudes_count,
+    images: (status.pics || []).map((pic) => pic.large?.url || pic.url).filter(Boolean),
+    pic: status.page_info?.page_pic?.url || status.user?.avatar_hd || '',
+  };
+  job.title = metadata.title;
+  await fs.writeFile(path.join(jobDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+  const comments = [];
+  let maxId = '0';
+  for (let page = 0; page < 20; page += 1) {
+    ensureNotStopped(job);
+    try {
+      const url = `https://m.weibo.cn/comments/hotflow?id=${encodeURIComponent(id)}&mid=${encodeURIComponent(id)}&max_id=${encodeURIComponent(maxId)}&max_id_type=0`;
+      const payload = await fetchWeiboJson(url, headers);
+      const rows = payload.data || [];
+      for (const row of rows) comments.push(weiboCommentRow(row, 0));
+      if (!payload.max_id || payload.max_id === 0 || String(payload.max_id) === String(maxId) || !rows.length) break;
+      maxId = String(payload.max_id);
+      await sleep(450);
+    } catch (error) {
+      log(job, `微博评论接口停止：${error.message.slice(0, 180)}`);
+      break;
+    }
+  }
+  const savedComments = await writeComments(jobDir, comments);
+  markTimeline(job, 'interaction-done', '互动采集完成', 'done', `${savedComments.length} 条评论`);
+  const notes = [
+    '已读取微博正文、配图和公开互动数据。',
+    `微博显示评论数 ${metadata.commentCount || 0}；本次接口采集 ${savedComments.length} 条评论。`,
+  ];
+  return buildFinalMarkdown(jobDir, {
+    job,
+    sourceUrl: job.url,
+    title: metadata.title || job.url,
+    platform: 'weibo',
+    metadata,
+    transcript: [],
+    comments: savedComments,
+    danmaku: [],
+    notes,
+  });
 }
 
 async function collectGeneric(job, jobDir) {
@@ -2100,7 +2394,11 @@ async function runJob(job) {
       ? await collectBilibili(job, jobDir)
       : isXiaohongshuUrl(job.url)
         ? await collectXiaohongshu(job, jobDir)
-        : await collectGeneric(job, jobDir);
+        : isXiaoyuzhouUrl(job.url)
+          ? await collectXiaoyuzhou(job, jobDir)
+          : isWeiboUrl(job.url)
+            ? await collectWeibo(job, jobDir)
+            : await collectGeneric(job, jobDir);
     ensureNotStopped(job);
     job.outputs = {
       final: finalPath,
@@ -2481,7 +2779,11 @@ const server = http.createServer(async (req, res) => {
               ? (job.url || 'https://www.xiaohongshu.com/')
               : bilibiliBvid(job.url || '')
                 ? `https://www.bilibili.com/video/${bilibiliBvid(job.url || '')}/`
-                : (job.url || 'https://www.bilibili.com/'),
+                : isXiaoyuzhouUrl(job.url || '')
+                  ? (job.url || 'https://www.xiaoyuzhoufm.com/')
+                  : isWeiboUrl(job.url || '')
+                    ? (job.url || 'https://m.weibo.cn/')
+                    : (job.url || 'https://www.bilibili.com/'),
             Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
           },
         });
