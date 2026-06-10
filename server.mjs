@@ -539,6 +539,15 @@ function contentImageProxyUrl(job, index) {
   return `/api/jobs/${encodeURIComponent(job.id)}/content-image?index=${index}`;
 }
 
+function contentImageUrls(job, metadata = {}) {
+  const platform = job.platform || metadata.platform || '';
+  if (platform === 'xiaohongshu' || isXiaohongshuUrl(job.url || '')) {
+    return xhsContentImageUrls(job, metadata);
+  }
+  const cover = normalizeMediaUrl(metadata.pic || metadata.cover || metadata.thumbnail || metadata.thumbnail_url);
+  return cover ? [cover] : [];
+}
+
 function readXhsBrowserNote(job) {
   const capturePath = path.join(jobsDir, job.id, 'xhs_browser_capture.json');
   const capture = readJsonFile(capturePath, null);
@@ -572,10 +581,11 @@ function buildContentPreview(job, metadata = {}) {
     return content;
   }
 
-  const cover = normalizeMediaUrl(metadata.pic || metadata.cover || metadata.thumbnail || metadata.thumbnail_url);
-  if (cover) {
-    content.cover = cover;
-    content.images = [cover];
+  const imageUrls = contentImageUrls(job, metadata);
+  if (imageUrls.length) {
+    content.cover = imageUrls[0];
+    content.images = imageUrls.map((_, index) => contentImageProxyUrl(job, index));
+    content.originalImages = imageUrls;
   }
   content.text = metadata.desc || metadata.description || metadata.intro || '';
   return content;
@@ -2438,14 +2448,18 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'GET' && action === 'content-image') {
         const metadata = job.outputs?.metadata ? readJsonFile(job.outputs.metadata, {}) : {};
-        const images = xhsContentImageUrls(job, metadata);
+        const images = contentImageUrls(job, metadata);
         const index = Math.max(0, Number(url.searchParams.get('index') || 0));
         const imageUrl = images[index];
         if (!imageUrl) return json(res, 404, { ok: false, error: 'image not found' });
         const response = await fetch(imageUrl, {
           headers: {
             'User-Agent': UA,
-            Referer: job.url || 'https://www.xiaohongshu.com/',
+            Referer: isXiaohongshuUrl(job.url || '')
+              ? (job.url || 'https://www.xiaohongshu.com/')
+              : bilibiliBvid(job.url || '')
+                ? `https://www.bilibili.com/video/${bilibiliBvid(job.url || '')}/`
+                : (job.url || 'https://www.bilibili.com/'),
             Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
           },
         });

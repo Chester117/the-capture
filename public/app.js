@@ -1346,24 +1346,15 @@ function renderJobs() {
   }
 }
 
-function restoreWindowScroll(x, y) {
-  requestAnimationFrame(() => {
-    window.scrollTo(x, y);
-    requestAnimationFrame(() => window.scrollTo(x, y));
-  });
-}
-
-async function loadJobs({ preserveScroll = false } = {}) {
+async function loadJobs() {
   const body = await api('/api/jobs');
   jobs = body.jobs || [];
   if (!selectedId && jobs.length) selectedId = jobs[0].id;
   renderJobs();
-  if (selectedId) await loadJob(selectedId, { preserveScroll });
+  if (selectedId) await loadJob(selectedId);
 }
 
-async function loadJob(id, { preserveScroll = false } = {}) {
-  const scrollX = window.scrollX;
-  const scrollY = window.scrollY;
+async function loadJob(id) {
   selectedId = id;
   renderJobs();
   const { job } = await api(`/api/jobs/${id}`);
@@ -1375,8 +1366,9 @@ async function loadJob(id, { preserveScroll = false } = {}) {
   jobUrl.title = job.url || '';
   const liveLine = captureStageText(job);
   const logLines = liveLine ? [...(job.log || []), liveLine] : (job.log || []);
+  const logWasPinned = progressLog.scrollHeight - progressLog.scrollTop - progressLog.clientHeight < 16;
   progressLog.innerHTML = logLines.map((line) => `<div>${normalizeClockText(line)}</div>`).join('');
-  progressLog.scrollTop = progressLog.scrollHeight;
+  if (logWasPinned) progressLog.scrollTop = progressLog.scrollHeight;
   renderJobTimeline(job);
   renderCaptureProgress(job);
   contentLink.href = contentPageUrl(job);
@@ -1405,7 +1397,6 @@ async function loadJob(id, { preserveScroll = false } = {}) {
   summaryEmpty.classList.toggle('hidden', Boolean(summary));
   summaryBox.classList.toggle('error', Boolean(localSummary?.startsWith('总结失败：')));
   renderMarkdown(summaryText, summary);
-  if (preserveScroll) restoreWindowScroll(scrollX, scrollY);
 }
 
 async function selectJob(id) {
@@ -1603,7 +1594,7 @@ platformFilter.addEventListener('change', () => {
 });
 
 setInterval(() => {
-  loadJobs({ preserveScroll: true }).catch(() => {});
+  loadJobs().catch(() => {});
 }, 2500);
 
 setInterval(() => {
