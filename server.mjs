@@ -148,12 +148,17 @@ function verifySession(value) {
 function publicJob(job) {
   const completion = xhsCompletionStatus(job);
   const canReadView = Boolean(job.outputs?.json || job.outputs?.danmaku || fsSync.existsSync(transcriptPath(job)));
+  const metadata = job.outputs?.metadata ? readJsonFile(job.outputs.metadata, null) : null;
+  if (metadata && (metadata.platform === 'xiaohongshu' || job.platform === 'xiaohongshu')) {
+    metadata.title = cleanXhsTitle(metadata.title || job.title || '');
+  }
   return {
     ...job,
+    title: displayTitle(job),
     state: completion.state || job.state,
     timeline: timelineForJob(job),
     xhsCompletion: completion.details || job.xhsCompletion || null,
-    metadata: job.outputs?.metadata ? readJsonFile(job.outputs.metadata, null) : null,
+    metadata,
     preview: job.outputs?.final ? readPreview(job.outputs.final) : '',
     captureProgress: readCaptureProgress(job),
     view: canReadView ? readJobView(job) : null,
@@ -212,9 +217,25 @@ function cleanFilePart(value, fallback = 'capture') {
     .slice(0, 120) || fallback;
 }
 
+function cleanXhsTitle(value, fallback = '') {
+  return String(value || fallback)
+    .replace(/\s*[-–—|｜]\s*(小红书|REDnote)\s*$/gi, '')
+    .replace(/\s*(小红书|REDnote)\s*$/gi, '')
+    .replace(/\s*[-–—|｜]\s*$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function displayTitle(job) {
+  const title = job?.title || job?.url || '';
+  return job?.platform === 'xiaohongshu' || isXiaohongshuUrl(job?.url || '')
+    ? cleanXhsTitle(title, title)
+    : title;
+}
+
 function markdownDownloadName(job) {
   const platform = cleanFilePart(job.platform || 'video');
-  const title = cleanFilePart(job.title || job.url || job.id);
+  const title = cleanFilePart(displayTitle(job) || job.url || job.id);
   return `${platform}_${title}.md`;
 }
 
@@ -574,7 +595,7 @@ function buildContentPreview(job, metadata = {}) {
   if (platform === 'xiaohongshu' || isXiaohongshuUrl(job.url || '')) {
     const browserNote = readXhsBrowserNote(job) || {};
     const imageUrls = xhsContentImageUrls(job, metadata);
-    content.title = browserNote.title || content.title;
+    content.title = cleanXhsTitle(browserNote.title || content.title);
     content.text = cleanXhsDesc(browserNote.desc || content.text);
     content.images = imageUrls.map((_, index) => contentImageProxyUrl(job, index));
     content.originalImages = imageUrls;
@@ -1288,7 +1309,8 @@ async function collectXiaohongshu(job, jobDir) {
     return {};
   });
   const metadata = { noteId, sourceUrl: job.url, platform: 'xiaohongshu', ...pageMeta };
-  job.title = pageMeta.title || `小红书 ${noteId}`;
+  metadata.title = cleanXhsTitle(metadata.title || '');
+  job.title = metadata.title || `小红书 ${noteId}`;
   await fs.writeFile(path.join(jobDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
   job.outputs = { ...(job.outputs || {}), metadata: path.join(jobDir, 'metadata.json') };
   await saveJobs();
@@ -1323,7 +1345,7 @@ async function collectXiaohongshu(job, jobDir) {
       comments = browserCapture.comments;
       await fs.writeFile(path.join(jobDir, 'xhs_comments_pages.json'), JSON.stringify(browserCapture.rawPayloads || [], null, 2));
       const browserNote = browserCapture.pageState?.note || {};
-      if (browserNote.title && !metadata.title) metadata.title = browserNote.title;
+      if (browserNote.title && !metadata.title) metadata.title = cleanXhsTitle(browserNote.title);
       if (browserNote.desc && !metadata.desc) metadata.desc = browserNote.desc;
       if (browserNote.interactInfo) metadata.interactInfo = browserNote.interactInfo;
       if (browserNote.interactInfo?.commentCount && !metadata.commentCount) metadata.commentCount = browserNote.interactInfo.commentCount;
@@ -1478,7 +1500,7 @@ async function fetchXhsPageMeta(url, headers) {
   const shareCount = text.match(/"shareCount"\s*:\s*"?([\d.万亿,]+)/)?.[1]
     || text.match(/"share_count"\s*:\s*"?([\d.万亿,]+)/)?.[1]
     || '';
-  return { title: title.replace(/小红书|REDnote/gi, '').trim(), desc, commentCount, likedCount, collectedCount, shareCount };
+  return { title: cleanXhsTitle(title), desc, commentCount, likedCount, collectedCount, shareCount };
 }
 
 function decodeHtml(text) {
