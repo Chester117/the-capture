@@ -1342,6 +1342,71 @@ function xiaoyuzhouRows(comments = []) {
   return out;
 }
 
+function cookieValue(cookie = '', name = '') {
+  return String(cookie || '').split(/;\s*/).map((part) => part.split('=')).find(([key]) => key === name)?.slice(1).join('=') || '';
+}
+
+async function requestXiaoyuzhouPodcaster(pathname, body, cookie) {
+  const token = cookieValue(cookie, 'x-jike-access-token') || cookieValue(cookie, 'jike_access_token');
+  const response = await fetch(`https://podcaster-api.xiaoyuzhoufm.com${pathname}`, {
+    method: 'POST',
+    headers: {
+      'User-Agent': UA,
+      Accept: 'application/json, text/plain, */*',
+      'Content-Type': 'application/json;charset=UTF-8',
+      Referer: 'https://podcaster.xiaoyuzhoufm.com/',
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...(token ? { 'x-jike-access-token': token } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 180)}`);
+  const payload = JSON.parse(text);
+  if (payload.code && payload.code !== 0) throw new Error(`code=${payload.code} ${payload.message || payload.msg || ''}`);
+  return payload.data ?? payload;
+}
+
+async function fetchXiaoyuzhouPodcasterComments({ eid, pid, cookie, job }) {
+  if (!cookie || !pid) return [];
+  const out = [];
+  let skip = 0;
+  const limit = 100;
+  for (let page = 0; page < 20; page += 1) {
+    ensureNotStopped(job);
+    const payload = await requestXiaoyuzhouPodcaster('/v1/comment/list', { eid, pid, skip, limit }, cookie);
+    const rows = Array.isArray(payload.data) ? payload.data : Array.isArray(payload) ? payload : [];
+    for (const row of rows) out.push(xiaoyuzhouCommentRow(row, 0));
+    if (!rows.length || rows.length < limit) break;
+    skip += rows.length;
+    await sleep(250);
+  }
+  const roots = out.filter((row) => Number(row.level || 0) === 0 && Number(row.child_count || 0) > 0).slice(0, 120);
+  for (const root of roots) {
+    try {
+      let loadMoreKey = undefined;
+      for (let page = 0; page < 10; page += 1) {
+        ensureNotStopped(job);
+        const payload = await requestXiaoyuzhouPodcaster('/v1/comment/list-thread', {
+          primaryCommentId: root.rpid,
+          order: 'SMART',
+          ...(loadMoreKey ? { loadMoreKey } : {}),
+        }, cookie);
+        const rows = Array.isArray(payload.data) ? payload.data : [];
+        for (const row of rows) {
+          if (String(row.id || '') !== root.rpid) out.push(xiaoyuzhouCommentRow(row, 1, root.rpid));
+        }
+        if (!payload.loadMoreKey || !rows.length) break;
+        loadMoreKey = payload.loadMoreKey;
+        await sleep(200);
+      }
+    } catch (error) {
+      log(job, `小宇宙评论线程 ${root.rpid} 分页停止：${error.message.slice(0, 140)}`);
+    }
+  }
+  return out;
+}
+
 async function collectXiaoyuzhou(job, jobDir) {
   job.platform = 'xiaoyuzhou';
   const eid = xiaoyuzhouEpisodeId(job.url);
@@ -1381,12 +1446,25 @@ async function collectXiaoyuzhou(job, jobDir) {
   job.title = metadata.title || `小宇宙 ${eid}`;
   await fs.writeFile(path.join(jobDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
   await fs.writeFile(path.join(jobDir, 'xiaoyuzhou_next_data.json'), JSON.stringify(nextData?.props?.pageProps || {}, null, 2));
-  let comments = await writeComments(jobDir, xiaoyuzhouRows(initialComments));
+  let rawComments = xiaoyuzhouRows(initialComments);
+  if (cookie) {
+    try {
+      const podcasterComments = await fetchXiaoyuzhouPodcasterComments({ eid, pid: podcast.pid || episode.pid, cookie, job });
+      if (podcasterComments.length > rawComments.length) {
+        rawComments = mergeCommentRows(podcasterComments, rawComments);
+        log(job, `小宇宙 podcaster API 评论采集：${rawComments.length} 条`);
+      }
+    } catch (error) {
+      log(job, `小宇宙 podcaster 评论接口失败，使用公开页评论：${error.message.slice(0, 180)}`);
+    }
+  }
+  let comments = await writeComments(jobDir, rawComments);
   markTimeline(job, 'interaction-done', '互动采集完成', 'done', `${comments.length} 条评论/回复`);
 
   let transcript = [];
   const notes = [
     '已解析小宇宙公开页面 __NEXT_DATA__ 中的节目内容、互动数、首屏评论和回复。',
+    cookie ? '已尝试使用小宇宙登录态调用 podcaster 评论分页接口。' : '未发现 auth/xiaoyuzhou-cookie-header.txt，使用公开页首屏评论。',
     metadata.commentCount && comments.length < Number(metadata.commentCount)
       ? `页面显示评论数 ${metadata.commentCount}；公开首屏携带 ${comments.length} 条评论/回复，后续分页接口仍需继续补强。`
       : `页面显示评论数 ${metadata.commentCount || comments.length}；本次采集 ${comments.length} 条评论/回复。`,
