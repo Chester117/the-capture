@@ -1384,17 +1384,22 @@ async function loadJob(id) {
   downloadLink.classList.toggle('hidden', !job.outputs?.final);
   danmakuLink.classList.toggle('hidden', !job.outputs?.danmaku);
   renderJobView(job);
+  const localSummary = summaryDrafts.get(job.id);
+  const isSummaryRunning = localSummary === '正在生成总结...';
   const hasInteractionData = Boolean((job.view?.stats?.commentCount || 0) > 0 || (job.view?.stats?.danmakuCount || 0) > 0 || job.outputs?.json || job.outputs?.danmaku);
   const canFullSummary = ['done', 'partial'].includes(job.state) || Boolean(job.outputs?.final);
-  gptButton.disabled = !canFullSummary;
-  summaryEmptyGpt.disabled = !canFullSummary;
-  gptInteractionButton.disabled = !hasInteractionData;
-  summaryEmptyInteraction.disabled = !hasInteractionData;
+  gptButton.textContent = isSummaryRunning ? '总结中...' : 'AI 总结';
+  gptInteractionButton.textContent = isSummaryRunning ? '总结中...' : '只总结互动';
+  summaryEmptyGpt.textContent = isSummaryRunning ? '总结中...' : 'AI 总结';
+  summaryEmptyInteraction.textContent = isSummaryRunning ? '总结中...' : '只总结互动';
+  gptButton.disabled = isSummaryRunning || !canFullSummary;
+  summaryEmptyGpt.disabled = isSummaryRunning || !canFullSummary;
+  gptInteractionButton.disabled = isSummaryRunning || !hasInteractionData;
+  summaryEmptyInteraction.disabled = isSummaryRunning || !hasInteractionData;
   contentLink.classList.toggle('hidden', !job.url);
   stopButton.classList.toggle('hidden', !['queued', 'running'].includes(job.state));
   stopButton.disabled = !['queued', 'running'].includes(job.state);
   deleteButton.disabled = false;
-  const localSummary = summaryDrafts.get(job.id);
   const summary = localSummary || job.summary || '';
   currentSummaryMarkdown = summary;
   summaryBox.classList.toggle('hidden', !summary);
@@ -1466,6 +1471,8 @@ deleteButton.addEventListener('click', async () => {
 
 async function runGptSummary(interactionOnly = false) {
   if (!selectedId) return;
+  const jobId = selectedId;
+  const isCurrentJob = () => selectedId === jobId;
   saveGptSettingsFromForm();
   gptButton.disabled = true;
   gptInteractionButton.disabled = true;
@@ -1477,32 +1484,38 @@ async function runGptSummary(interactionOnly = false) {
   activeEmptyButton.textContent = '总结中...';
   summaryEmptyGpt.textContent = '总结中...';
   summaryEmptyInteraction.textContent = '总结中...';
-  currentSummaryMarkdown = '正在生成总结...';
-  summaryDrafts.set(selectedId, '正在生成总结...');
-  summaryBox.classList.remove('hidden');
-  summaryEmpty.classList.add('hidden');
-  summaryBox.classList.remove('error');
-  renderMarkdown(summaryText, '正在生成总结...');
-  activateTab('summary');
+  summaryDrafts.set(jobId, '正在生成总结...');
+  if (isCurrentJob()) {
+    currentSummaryMarkdown = '正在生成总结...';
+    summaryBox.classList.remove('hidden');
+    summaryEmpty.classList.add('hidden');
+    summaryBox.classList.remove('error');
+    renderMarkdown(summaryText, '正在生成总结...');
+    activateTab('summary');
+  }
   try {
-    const body = await api(`/api/jobs/${selectedId}/gpt-summary`, {
+    const body = await api(`/api/jobs/${jobId}/gpt-summary`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...gptSettings, interactionOnly }),
     });
-    summaryDrafts.delete(selectedId);
-    currentSummaryMarkdown = body.summary || '';
-    summaryBox.classList.remove('hidden');
-    renderMarkdown(summaryText, currentSummaryMarkdown);
+    summaryDrafts.delete(jobId);
+    if (isCurrentJob()) {
+      currentSummaryMarkdown = body.summary || '';
+      summaryBox.classList.remove('hidden');
+      renderMarkdown(summaryText, currentSummaryMarkdown);
+    }
     await loadJobs();
   } catch (error) {
     const message = `总结失败：${error.message || '未配置 OpenAI API Key 或请求失败'}`;
-    currentSummaryMarkdown = message;
-    summaryDrafts.set(selectedId, message);
-    summaryBox.classList.remove('hidden');
-    summaryEmpty.classList.add('hidden');
-    summaryBox.classList.add('error');
-    renderMarkdown(summaryText, message);
+    summaryDrafts.set(jobId, message);
+    if (isCurrentJob()) {
+      currentSummaryMarkdown = message;
+      summaryBox.classList.remove('hidden');
+      summaryEmpty.classList.add('hidden');
+      summaryBox.classList.add('error');
+      renderMarkdown(summaryText, message);
+    }
   } finally {
     gptButton.textContent = 'AI 总结';
     gptInteractionButton.textContent = '只总结互动';
@@ -1512,7 +1525,9 @@ async function runGptSummary(interactionOnly = false) {
     gptInteractionButton.disabled = false;
     summaryEmptyGpt.disabled = false;
     summaryEmptyInteraction.disabled = false;
-    if (selectedId) loadJob(selectedId).catch(() => {});
+    if (selectedId) {
+      loadJob(selectedId).catch(() => {});
+    }
   }
 }
 
