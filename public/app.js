@@ -504,7 +504,7 @@ function platformLogoForJob(job) {
 
 function platformKeyForJob(job) {
   const fromPlatform = platformKey(job?.platform || '');
-  if (['bilibili', 'xiaohongshu', 'xiaoyuzhou', 'youtube', 'weibo'].includes(fromPlatform)) return fromPlatform;
+  if (['bilibili', 'xiaohongshu', 'xiaoyuzhou', 'youtube', 'weibo', 'article'].includes(fromPlatform)) return fromPlatform;
   const url = String(job?.url || '');
   if (/youtube\.com|youtu\.be/i.test(url)) return 'youtube';
   if (/bilibili\.com|b23\.tv/i.test(url)) return 'bilibili';
@@ -679,9 +679,10 @@ function captureStageText(job) {
 function renderStats(view) {
   clear(stats);
   const interaction = view?.stats?.interaction || {};
+  const isArticle = view?.content?.platform === 'article';
   const valueOrDash = (value) => value === undefined || value === null || value === '' ? '--' : numberLabel(value);
   const items = [
-    ['转写段落', view?.stats?.transcriptCount || 0],
+    [isArticle ? '正文段落' : '转写段落', view?.stats?.transcriptCount || 0],
     ['评论条目', view?.stats?.commentCount || 0],
     ['主评论', view?.stats?.mainCommentCount || 0],
     ['弹幕条目', view?.stats?.danmakuCount || 0],
@@ -717,9 +718,11 @@ function renderContentPreview(content) {
   const head = document.createElement('div');
   head.className = 'content-preview-head';
   const heading = document.createElement('h3');
-  heading.textContent = '原帖内容';
+  heading.textContent = content?.platform === 'article' ? '网页正文' : '原帖内容';
   const meta = document.createElement('span');
-  meta.textContent = images.length ? `${numberLabel(images.length)} 张图片` : '正文';
+  meta.textContent = content?.platform === 'article'
+    ? `${numberLabel(text.split(/\n{2,}/).filter(Boolean).length || 1)} 段正文${images.length ? ` · ${numberLabel(images.length)} 张图片` : ''}`
+    : images.length ? `${numberLabel(images.length)} 张图片` : '正文';
   head.append(heading, meta);
   contentPreview.appendChild(head);
 
@@ -983,7 +986,7 @@ function renderCaptureProgress(job) {
 function renderTranscript(rows) {
   clear(transcriptList);
   if (!rows?.length) {
-    transcriptList.innerHTML = '<div class="empty-inline">暂无视频转写。</div>';
+    transcriptList.innerHTML = '<div class="empty-inline">暂无转写内容。</div>';
     return;
   }
   for (const row of rows) {
@@ -991,7 +994,9 @@ function renderTranscript(rows) {
     item.className = 'transcript-item';
     const meta = document.createElement('div');
     meta.className = 'transcript-meta';
-    meta.textContent = `${hms(row.start)}-${hms(row.end)}${row.speaker ? ` · ${row.speaker}` : ''}`;
+    meta.textContent = row.start === undefined && row.end === undefined
+      ? `${row.speaker || '正文段落'}${row.index !== undefined ? ` · ${Number(row.index) + 1}` : ''}`
+      : `${hms(row.start)}-${hms(row.end)}${row.speaker ? ` · ${row.speaker}` : ''}`;
     const text = document.createElement('p');
     text.textContent = row.text || '';
     item.append(meta, text);

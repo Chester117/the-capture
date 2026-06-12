@@ -464,6 +464,8 @@ function cooldownMs(value) {
 
 function transcriptPath(job) {
   const jobDir = path.join(jobsDir, job.id);
+  const articlePath = path.join(jobDir, 'article_transcript.json');
+  if (fsSync.existsSync(articlePath)) return articlePath;
   const asrPath = path.join(jobDir, 'video_audio_asr_transcript.json');
   if (fsSync.existsSync(asrPath)) return asrPath;
   return path.join(jobDir, 'video_audio_ticnote_transcript.txt');
@@ -607,7 +609,7 @@ function buildContentPreview(job, metadata = {}) {
   const content = {
     platform,
     title: metadata.title || job.title || '',
-    text: metadata.desc || metadata.description || '',
+    text: metadata.articleText || metadata.desc || metadata.description || '',
     images: [],
     cover: '',
   };
@@ -628,7 +630,7 @@ function buildContentPreview(job, metadata = {}) {
     content.images = imageUrls.map((_, index) => contentImageProxyUrl(job, index));
     content.originalImages = imageUrls;
   }
-  content.text = metadata.desc || metadata.description || metadata.intro || metadata.shownotes || '';
+  content.text = metadata.articleText || metadata.desc || metadata.description || metadata.intro || metadata.shownotes || '';
   return content;
 }
 
@@ -903,6 +905,11 @@ async function requestJson(url, headers = {}) {
   const payload = await response.json();
   if (payload.code !== undefined && payload.code !== 0) throw new Error(`Bilibili code=${payload.code} ${payload.message || ''}`);
   return payload.data ?? payload;
+}
+
+async function readOpenaiApiKey() {
+  return process.env.OPENAI_API_KEY
+    || await fs.readFile(path.join(repoRoot, 'auth/openai-api-key.txt'), 'utf8').then((s) => s.trim()).catch(() => '');
 }
 
 async function readCookieHeader() {
@@ -1647,14 +1654,140 @@ async function collectWeibo(job, jobDir) {
   });
 }
 
-async function collectGeneric(job, jobDir, platform = 'generic') {
+function isMediaYtDlpMetadata(metadata = {}) {
+  return Boolean(
+    Number(metadata.duration || 0) > 0
+    || (Array.isArray(metadata.formats) && metadata.formats.length)
+    || metadata.requested_downloads
+    || metadata.url && /^(https?:)?\/\//i.test(String(metadata.url || '')) && metadata.ext && !/^html?$/i.test(String(metadata.ext))
+  );
+}
+
+async function buildArticleMarkdown(jobDir, payload) {
+  const paragraphs = textParagraphs(payload.articleText || '');
+  const lines = [];
+  lines.push(`# ${payload.title || payload.sourceUrl}`);
+  lines.push('');
+  lines.push(`来源：${payload.sourceUrl}`);
+  lines.push('平台：article');
+  lines.push(`采集时间：${now()}`);
+  lines.push('');
+  lines.push('## 采集说明');
+  lines.push('');
+  for (const note of payload.notes || []) lines.push(`- ${note}`);
+  lines.push(`- 正文段落：${paragraphs.length}。正文字符：${String(payload.articleText || '').length}。图片：${payload.images?.length || 0}。`);
+  lines.push('');
+  if (payload.desc) {
+    lines.push('## 页面描述');
+    lines.push('');
+    lines.push(payload.desc);
+    lines.push('');
+  }
+  lines.push('## 文章正文');
+  lines.push('');
+  if (paragraphs.length) {
+    for (const paragraph of paragraphs) {
+      lines.push(paragraph);
+      lines.push('');
+    }
+  } else {
+    lines.push('未提取到正文。');
+    lines.push('');
+  }
+  if (payload.images?.length) {
+    lines.push('## 页面图片');
+    lines.push('');
+    payload.images.forEach((url, index) => {
+      lines.push(`${index + 1}. ${url}`);
+    });
+    lines.push('');
+  }
+  const finalPath = path.join(jobDir, 'final_text.md');
+  await fs.writeFile(finalPath, lines.join('\n'));
+  return finalPath;
+}
+
+async function collectArticle(job, jobDir, seed = {}) {
+  job.platform = 'article';
+  log(job, '读取网页 HTML 并提取文章正文');
+  ensureNotStopped(job);
+  let html = seed.html || '';
+  let contentType = seed.contentType || '';
+  if (!html) {
+    const response = await fetch(job.url, {
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    html = await response.text();
+    contentType = response.headers.get('content-type') || '';
+    if (!response.ok) throw new Error(`网页读取失败：${response.status} ${response.statusText}: ${html.slice(0, 180)}`);
+  }
+  const heuristic = seed.article || extractArticleFromHtml(html, job.url);
+  let article = heuristic;
+  try {
+    const refined = await refineArticleWithGpt(job, heuristic);
+    if (refined?.articleText && refined.articleText.length >= Math.min(heuristic.articleText.length, 400)) article = refined;
+  } catch (error) {
+    log(job, `OpenAI 正文提取失败，使用本地抽取结果：${error.message.slice(0, 180)}`);
+  }
+  if (!String(article.articleText || '').trim()) {
+    article.articleText = normalizeArticleText(stripHtmlToText(html)).slice(0, 60000);
+    article.extraction = { ...(article.extraction || {}), method: 'full-page-fallback' };
+  }
+  job.title = article.title || seed.title || job.url;
+  const paragraphs = textParagraphs(article.articleText);
+  const transcriptRows = paragraphs.map((text, index) => ({
+    index,
+    speaker: '正文',
+    text,
+  }));
+  await fs.writeFile(path.join(jobDir, 'article_transcript.json'), JSON.stringify(transcriptRows, null, 2));
+  const { html: _html, article: _article, contentType: _seedContentType, ...seedMeta } = seed;
+  const metadata = {
+    ...seedMeta,
+    platform: 'article',
+    title: job.title,
+    desc: article.desc || seed.description || seed.desc || '',
+    description: article.desc || seed.description || seed.desc || '',
+    articleText: article.articleText,
+    articleParagraphCount: paragraphs.length,
+    images: article.images || [],
+    extraction: article.extraction || {},
+    contentType,
+  };
+  await fs.writeFile(path.join(jobDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+  markTimeline(job, 'content-extracted', '正文提取完成', 'done', `${paragraphs.length} 段`);
+  markTimeline(job, 'interaction-done', '互动采集完成', 'done', '普通网页无评论采集');
+  return buildArticleMarkdown(jobDir, {
+    job,
+    sourceUrl: job.url,
+    title: job.title,
+    desc: metadata.desc,
+    articleText: metadata.articleText,
+    images: metadata.images,
+    notes: [
+      metadata.extraction?.method === 'openai'
+        ? `使用 ${openaiModel} 提取网页主文章正文，过滤广告、导航和推荐内容。`
+        : '使用本地 HTML 结构规则提取网页主文章正文；未依赖页面广告区。',
+      seed.warning ? `yt-dlp 判定非视频或读取失败：${String(seed.warning).slice(0, 160)}` : '',
+    ].filter(Boolean),
+  });
+}
+
+async function collectGeneric(job, jobDir, platform = 'generic', initialMetadata = null) {
   job.platform = platform || 'generic';
   log(job, job.platform === 'youtube' ? '使用 yt-dlp 读取 YouTube 元数据' : '使用 yt-dlp 读取通用视频元数据');
   let metadata = {};
   try {
     ensureNotStopped(job);
-    const { stdout } = await spawnCapture(ytDlp, ['--dump-json', '--skip-download', '--no-playlist', job.url], { job });
-    metadata = JSON.parse(stdout);
+    if (initialMetadata) {
+      metadata = initialMetadata;
+    } else {
+      const { stdout } = await spawnCapture(ytDlp, ['--dump-json', '--skip-download', '--no-playlist', job.url], { job });
+      metadata = JSON.parse(stdout);
+    }
     metadata.platform = job.platform;
     job.title = metadata.title || job.url;
   } catch (error) {
@@ -1712,6 +1845,48 @@ async function collectGeneric(job, jobDir, platform = 'generic') {
     danmaku: [],
     notes,
   });
+}
+
+async function collectGenericOrArticle(job, jobDir) {
+  log(job, '判断未知链接是视频还是网页文章');
+  try {
+    const response = await fetch(job.url, {
+      signal: AbortSignal.timeout(12000),
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    const contentType = response.headers.get('content-type') || '';
+    if (response.ok && /text\/html|application\/xhtml\+xml/i.test(contentType)) {
+      const html = await response.text();
+      const article = extractArticleFromHtml(html, job.url);
+      const ogType = htmlMetaContent(html, ['og:type']).toLowerCase();
+      const paragraphCount = textParagraphs(article.articleText).length;
+      if (!/video|audio|music/i.test(ogType) && (article.articleText.length >= 1200 || paragraphCount >= 5)) {
+        log(job, '网页结构像文章，直接进入文章正文提取');
+        return collectArticle(job, jobDir, { html, article, contentType });
+      }
+    }
+  } catch (error) {
+    log(job, `网页快速嗅探跳过：${error.message.slice(0, 140)}`);
+  }
+  try {
+    ensureNotStopped(job);
+    const { stdout } = await spawnCapture(ytDlp, ['--dump-json', '--skip-download', '--no-playlist', job.url], {
+      job,
+      timeoutMs: 20000,
+    });
+    const metadata = JSON.parse(stdout);
+    if (isMediaYtDlpMetadata(metadata)) {
+      return collectGeneric(job, jobDir, 'generic', metadata);
+    }
+    log(job, 'yt-dlp 未发现明确视频资源，切换为网页文章采集');
+    return collectArticle(job, jobDir, metadata);
+  } catch (error) {
+    log(job, `yt-dlp 未识别为视频，切换为网页文章采集：${error.message.slice(0, 180)}`);
+    return collectArticle(job, jobDir, { warning: error.message });
+  }
 }
 
 async function collectXiaohongshu(job, jobDir) {
@@ -1931,6 +2106,198 @@ async function fetchXhsPageMeta(url, headers) {
 
 function decodeHtml(text) {
   return decodeXml(String(text || '').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))));
+}
+
+function htmlAttr(tag, name) {
+  const match = String(tag || '').match(new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+  return decodeHtml(match?.[2] || match?.[3] || match?.[4] || '');
+}
+
+function htmlMetaContent(html, keys = []) {
+  const wanted = new Set(keys.map((key) => String(key).toLowerCase()));
+  const re = /<meta\b[^>]*>/gi;
+  let match;
+  while ((match = re.exec(html))) {
+    const tag = match[0];
+    const name = (htmlAttr(tag, 'name') || htmlAttr(tag, 'property')).toLowerCase();
+    if (wanted.has(name)) return htmlAttr(tag, 'content');
+  }
+  return '';
+}
+
+function htmlTitle(html) {
+  return decodeHtml(htmlMetaContent(html, ['og:title', 'twitter:title'])
+    || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+    || '');
+}
+
+function stripHtmlToText(html) {
+  return decodeHtml(String(html || '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, ' ')
+    .replace(/<(header|footer|nav|aside|form)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|section|article|main|h[1-6]|li|blockquote|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' '))
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function normalizeArticleText(text) {
+  const seen = new Set();
+  const lines = String(text || '')
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 2)
+    .filter((line) => {
+      if (/^(广告|ADVERTISEMENT|相关阅读|推荐阅读|分享到|分享至|登录|注册)$/i.test(line)) return false;
+      const key = line.replace(/\s+/g, '');
+      if (key.length > 12 && seen.has(key)) return false;
+      if (key.length > 12) seen.add(key);
+      return true;
+    });
+  return lines.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function textParagraphs(text) {
+  return String(text || '')
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function articleImagesFromHtml(html, baseUrl) {
+  const urls = [];
+  const push = (value) => {
+    const raw = decodeHtml(String(value || '').trim());
+    if (!raw || /^data:/i.test(raw)) return;
+    try {
+      urls.push(new URL(raw, baseUrl).toString());
+    } catch {}
+  };
+  push(htmlMetaContent(html, ['og:image', 'twitter:image']));
+  const re = /<img\b[^>]*>/gi;
+  let match;
+  while ((match = re.exec(html)) && urls.length < 20) {
+    const tag = match[0];
+    push(htmlAttr(tag, 'src') || htmlAttr(tag, 'data-src') || htmlAttr(tag, 'data-original') || htmlAttr(tag, 'data-lazy-src'));
+  }
+  const seen = new Set();
+  return urls.map(normalizeMediaUrl).filter(Boolean).filter((url) => {
+    if (seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+}
+
+function extractArticleFromHtml(html, url) {
+  const clean = String(html || '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<(header|footer|nav|aside|form)\b[\s\S]*?<\/\1>/gi, ' ');
+  const candidates = [clean];
+  for (const re of [
+    /<article\b[^>]*>([\s\S]*?)<\/article>/gi,
+    /<main\b[^>]*>([\s\S]*?)<\/main>/gi,
+    /<(?:section|div)\b[^>]*(?:id|class)=["'][^"']*(?:article|content|post|entry|story|main|body)[^"']*["'][^>]*>([\s\S]*?)<\/(?:section|div)>/gi,
+  ]) {
+    let match;
+    while ((match = re.exec(clean)) && candidates.length < 80) candidates.push(match[1]);
+  }
+  let best = '';
+  let bestScore = -Infinity;
+  for (const candidate of candidates) {
+    const text = normalizeArticleText(stripHtmlToText(candidate));
+    const paragraphs = textParagraphs(text);
+    const chinese = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+    const words = (text.match(/[A-Za-z]{3,}/g) || []).length;
+    const score = text.length + paragraphs.length * 250 + chinese * 0.4 + words * 0.2;
+    if (score > bestScore) {
+      best = text;
+      bestScore = score;
+    }
+  }
+  const title = htmlTitle(html)
+    .replace(/\s*[-_|]\s*(知乎|微信公众平台|公众号|澎湃新闻|腾讯新闻|网易新闻|搜狐|新浪|虎嗅|少数派|Medium).*$/i, '')
+    .trim();
+  return {
+    title,
+    desc: htmlMetaContent(html, ['description', 'og:description', 'twitter:description']),
+    articleText: best,
+    images: articleImagesFromHtml(html, url),
+    extraction: { method: 'heuristic', paragraphCount: textParagraphs(best).length, charCount: best.length },
+  };
+}
+
+function parseJsonObject(text) {
+  const raw = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+async function refineArticleWithGpt(job, article) {
+  const apiKey = await readOpenaiApiKey();
+  if (!apiKey || !String(article.articleText || '').trim()) return null;
+  log(job, `调用 ${openaiModel} 提取网页主文章正文`);
+  const context = [
+    `URL: ${job.url}`,
+    `标题: ${article.title || job.title || ''}`,
+    `描述: ${article.desc || ''}`,
+    '',
+    '候选正文：',
+    String(article.articleText || '').slice(0, 65000),
+  ].join('\n');
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: openaiModel,
+      input: [
+        {
+          role: 'system',
+          content: [
+            '你是网页文章正文提取器。只保留页面里的主文章内容，删除广告、导航、推荐阅读、评论、版权、分享按钮、订阅引导和重复文字。',
+            '不要总结，不要改写文章意思。输出 JSON：{"title":"...","articleText":"..."}。',
+            'articleText 用自然段换行，尽量保留原文小标题和关键数字。如果候选正文不是文章，也尽量提取页面核心内容。',
+          ].join('\n'),
+        },
+        { role: 'user', content: context },
+      ],
+      max_output_tokens: 5200,
+    }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error?.message || `OpenAI HTTP ${response.status}`);
+  const parsed = parseJsonObject(body.output_text || (body.output || []).flatMap((item) => item.content || []).map((part) => part.text || '').join('\n'));
+  if (!parsed?.articleText) return null;
+  return {
+    ...article,
+    title: String(parsed.title || article.title || job.title || '').trim(),
+    articleText: normalizeArticleText(parsed.articleText),
+    extraction: {
+      ...(article.extraction || {}),
+      method: 'openai',
+      model: openaiModel,
+      paragraphCount: textParagraphs(parsed.articleText).length,
+      charCount: String(parsed.articleText || '').length,
+    },
+  };
 }
 
 async function collectXhsSubComments(noteId, rootId, headers, job) {
@@ -2532,7 +2899,7 @@ async function runJob(job) {
             ? await collectWeibo(job, jobDir)
             : isYoutubeUrl(job.url)
               ? await collectGeneric(job, jobDir, 'youtube')
-              : await collectGeneric(job, jobDir);
+              : await collectGenericOrArticle(job, jobDir);
     ensureNotStopped(job);
     job.outputs = {
       final: finalPath,
@@ -2628,9 +2995,68 @@ function compactUserProfile(comments) {
   };
 }
 
+async function gptArticleSummary(job, options, apiKey, text, metadata) {
+  const detailText = {
+    detailed: '很详细：保留文章结构，分层解释论点、论据、案例、数字和作者判断。',
+    medium: '中等：清晰总结文章主旨、关键论点、重要细节和结论。',
+    brief: '简略：输出短版 overview 和最关键的 3-6 个要点。',
+  }[options.detail] || '中等：清晰总结文章主旨、关键论点、重要细节和结论。';
+  const userPrompt = String(options.prompt || '').trim() || [
+    '请总结这篇网页文章的内容。',
+    '只基于文章正文，不要套用视频、弹幕、评论、用户画像模板。',
+    '输出 Markdown，结构清晰，重点说明文章讲了什么、核心观点是什么、有哪些关键事实或数字。',
+  ].join('\n');
+  const articleText = String(metadata.articleText || text || '').slice(0, 110000);
+  const context = [
+    '## 总结设置',
+    `详细程度：${detailText}`,
+    '',
+    '## 用户自定义 Prompt',
+    userPrompt,
+    '',
+    '## 文章元数据',
+    JSON.stringify({
+      title: job.title,
+      platform: 'article',
+      url: job.url,
+      description: metadata.desc || metadata.description || '',
+      extraction: metadata.extraction || {},
+      paragraphCount: metadata.articleParagraphCount || textParagraphs(articleText).length,
+    }, null, 2),
+    '',
+    '## 文章正文',
+    articleText,
+  ].join('\n');
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: openaiModel,
+      input: [
+        {
+          role: 'system',
+          content: [
+            '你是中文网页文章摘要助手。只总结用户提供的文章正文，不引入外部事实。',
+            '不要输出视频转写、评论分析、弹幕分析、用户画像、互动数据这些栏目。',
+            '如果正文很短或像网页碎片，请明确说明信息不足，并仍然提炼可见内容。',
+            '用户自定义 Prompt 的优先级高于默认结构，但不得要求你编造事实。',
+          ].join('\n'),
+        },
+        { role: 'user', content: context.slice(0, 130000) },
+      ],
+      max_output_tokens: options.detail === 'brief' ? 1400 : options.detail === 'detailed' ? 4200 : 2600,
+    }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error?.message || `OpenAI HTTP ${response.status}`);
+  return body.output_text || (body.output || []).flatMap((item) => item.content || []).map((part) => part.text || '').join('\n').trim();
+}
+
 async function gptSummary(job, options = {}) {
-  const apiKey = process.env.OPENAI_API_KEY
-    || await fs.readFile(path.join(repoRoot, 'auth/openai-api-key.txt'), 'utf8').then((s) => s.trim()).catch(() => '');
+  const apiKey = await readOpenaiApiKey();
   if (!apiKey) throw new Error('未设置 OPENAI_API_KEY');
   const interactionOnly = options.interactionOnly === true;
   if (!job.outputs?.final && !interactionOnly) throw new Error('任务还没有 final_text.md');
@@ -2639,6 +3065,9 @@ async function gptSummary(job, options = {}) {
   const danmaku = job.outputs?.danmaku ? readJsonFile(job.outputs.danmaku, []) : [];
   if (interactionOnly && !comments.length && !danmaku.length) throw new Error('还没有评论或弹幕数据可总结');
   const metadata = job.outputs?.metadata ? readJsonFile(job.outputs.metadata, {}) : {};
+  if (!interactionOnly && (platformForJob(job) === 'article' || metadata.platform === 'article')) {
+    return gptArticleSummary(job, options, apiKey, text, metadata);
+  }
   const detailText = {
     detailed: '很详细：输出完整分节分析，观点、数字、例子都尽量展开。',
     medium: '中等：输出清晰但不冗长的分析，每节保留关键数字和代表例子。',
