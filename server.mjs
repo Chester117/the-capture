@@ -155,11 +155,13 @@ function publicJob(job) {
   const completion = xhsCompletionStatus(job);
   const canReadView = Boolean(job.outputs?.json || job.outputs?.danmaku || fsSync.existsSync(transcriptPath(job)));
   const metadata = job.outputs?.metadata ? readJsonFile(job.outputs.metadata, null) : null;
+  const platform = platformForJob(job);
   if (metadata && (metadata.platform === 'xiaohongshu' || job.platform === 'xiaohongshu')) {
     metadata.title = cleanXhsTitle(metadata.title || job.title || '');
   }
   return {
     ...job,
+    platform,
     title: displayTitle(job),
     state: completion.state || job.state,
     timeline: timelineForJob(job),
@@ -1038,6 +1040,51 @@ function weiboStatusId(url) {
   return match ? decodeURIComponent(match[1]) : '';
 }
 
+function isYoutubeUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'youtu.be'
+      || host.endsWith('.youtu.be')
+      || host === 'youtube.com'
+      || host.endsWith('.youtube.com')
+      || host === 'youtube-nocookie.com'
+      || host.endsWith('.youtube-nocookie.com');
+  } catch {
+    return false;
+  }
+}
+
+function youtubeVideoId(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'youtu.be' || host.endsWith('.youtu.be')) {
+      return parsed.pathname.split('/').filter(Boolean)[0] || '';
+    }
+    const direct = parsed.searchParams.get('v');
+    if (direct) return direct;
+    const match = parsed.pathname.match(/\/(?:shorts|embed|live)\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  } catch {
+    return '';
+  }
+}
+
+function platformForUrl(url) {
+  if (bilibiliBvid(url)) return 'bilibili';
+  if (isXiaohongshuUrl(url)) return 'xiaohongshu';
+  if (isXiaoyuzhouUrl(url)) return 'xiaoyuzhou';
+  if (isWeiboUrl(url)) return 'weibo';
+  if (isYoutubeUrl(url)) return 'youtube';
+  return 'generic';
+}
+
+function platformForJob(job) {
+  const current = String(job?.platform || '').toLowerCase();
+  if (current && current !== 'generic') return job.platform;
+  return platformForUrl(job?.url || '');
+}
+
 function contentKey(inputUrl) {
   const bvid = bilibiliBvid(inputUrl);
   if (bvid) return `bilibili:${bvid}`;
@@ -1047,6 +1094,8 @@ function contentKey(inputUrl) {
   if (xyzEpisodeId) return `xiaoyuzhou:${xyzEpisodeId}`;
   const weiboId = weiboStatusId(inputUrl);
   if (weiboId && isWeiboUrl(inputUrl)) return `weibo:${weiboId}`;
+  const youtubeId = youtubeVideoId(inputUrl);
+  if (youtubeId && isYoutubeUrl(inputUrl)) return `youtube:${youtubeId}`;
   try {
     const parsed = new URL(inputUrl);
     parsed.hash = '';
@@ -1598,18 +1647,19 @@ async function collectWeibo(job, jobDir) {
   });
 }
 
-async function collectGeneric(job, jobDir) {
-  job.platform = 'generic';
-  log(job, '使用 yt-dlp 读取通用视频元数据');
+async function collectGeneric(job, jobDir, platform = 'generic') {
+  job.platform = platform || 'generic';
+  log(job, job.platform === 'youtube' ? '使用 yt-dlp 读取 YouTube 元数据' : '使用 yt-dlp 读取通用视频元数据');
   let metadata = {};
   try {
     ensureNotStopped(job);
     const { stdout } = await spawnCapture(ytDlp, ['--dump-json', '--skip-download', '--no-playlist', job.url], { job });
     metadata = JSON.parse(stdout);
+    metadata.platform = job.platform;
     job.title = metadata.title || job.url;
   } catch (error) {
     log(job, `yt-dlp 元数据失败：${error.message.slice(0, 220)}`);
-    metadata = { title: job.url, extractor: 'unknown', warning: error.message };
+    metadata = { title: job.url, extractor: 'unknown', platform: job.platform, warning: error.message };
   }
   await fs.writeFile(path.join(jobDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
   let comments = Array.isArray(metadata.comments) ? metadata.comments.map((item, index) => ({
@@ -1624,7 +1674,11 @@ async function collectGeneric(job, jobDir) {
   markTimeline(job, 'interaction-done', '互动采集完成', 'done', `${comments.length} 条评论`);
 
   let transcript = [];
-  const notes = ['通用平台评论抓取取决于 yt-dlp extractor 是否返回 comments 字段；Bilibili 以外的平台优先保证视频内容转写。'];
+  const notes = [
+    job.platform === 'youtube'
+      ? 'YouTube 目前使用 yt-dlp 抓取元数据、下载音频并转写；评论抓取取决于 yt-dlp extractor 是否返回 comments 字段。'
+      : '通用平台评论抓取取决于 yt-dlp extractor 是否返回 comments 字段；Bilibili 以外的平台优先保证视频内容转写。',
+  ];
   if (job.transcribeVideo !== false) {
     try {
       log(job, '下载通用平台音频');
@@ -1651,7 +1705,7 @@ async function collectGeneric(job, jobDir) {
     job,
     sourceUrl: job.url,
     title: metadata.title || job.url,
-    platform: metadata.extractor || 'generic',
+    platform: job.platform === 'youtube' ? 'youtube' : (metadata.extractor || job.platform || 'generic'),
     metadata,
     transcript,
     comments,
@@ -2476,7 +2530,9 @@ async function runJob(job) {
           ? await collectXiaoyuzhou(job, jobDir)
           : isWeiboUrl(job.url)
             ? await collectWeibo(job, jobDir)
-            : await collectGeneric(job, jobDir);
+            : isYoutubeUrl(job.url)
+              ? await collectGeneric(job, jobDir, 'youtube')
+              : await collectGeneric(job, jobDir);
     ensureNotStopped(job);
     job.outputs = {
       final: finalPath,
@@ -2720,7 +2776,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, jobs: jobs.length, auth: Boolean(accessToken) });
 
     if (req.method === 'GET' && url.pathname === '/api/jobs') {
-      return json(res, 200, { ok: true, jobs: visibleJobs().map((job) => ({ ...job, preview: undefined })) });
+      return json(res, 200, { ok: true, jobs: visibleJobs().map((job) => ({ ...publicJob(job), preview: undefined })) });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/emote-dictionary') {
@@ -2744,6 +2800,7 @@ const server = http.createServer(async (req, res) => {
         existing.contentKey = key;
         existing.input = rawInput;
         existing.url = inputUrl;
+        existing.platform = platformForJob(existing);
         existing.transcribeVideo = transcribeVideo;
         existing.updatedAt = now();
         if (existing.state === 'queued' || existing.state === 'running') {
@@ -2778,7 +2835,7 @@ const server = http.createServer(async (req, res) => {
         input: rawInput,
         url: inputUrl,
         title: '',
-        platform: '',
+        platform: platformForUrl(inputUrl),
         state: 'queued',
         transcribeVideo,
         createdAt: now(),

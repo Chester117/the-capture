@@ -8,7 +8,7 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/Codex.app/Contents/Resources/node</string>
+    <string>/Applications/Codex.app/Contents/Resources/cua_node/bin/node</string>
     <string>server.mjs</string>
   </array>
 
