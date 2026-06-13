@@ -143,7 +143,11 @@
         <h2 id="gpt-modal-title">总结设置</h2>
         <button id="gpt-modal-close" class="icon-button" type="button" aria-label="关闭">×</button>
       </div>
-      <div class="modal-grid">
+      <div class="summary-preset-row" role="tablist" aria-label="总结预设">
+        <button class="summary-preset active" data-summary-preset="video" type="button">视频总结</button>
+        <button class="summary-preset" data-summary-preset="article" type="button">文章总结</button>
+      </div>
+      <div class="modal-grid summary-preset-panel" id="video-summary-options" data-summary-panel="video">
         <label>
           详细程度
           <select id="gpt-detail">
@@ -155,6 +159,9 @@
         <label class="check-row"><input id="gpt-include-comments" type="checkbox" checked> 评论分析</label>
         <label class="check-row"><input id="gpt-include-danmaku" type="checkbox" checked> 弹幕分析</label>
         <label class="check-row"><input id="gpt-include-profile" type="checkbox" checked> 用户画像</label>
+      </div>
+      <div class="summary-preset-panel summary-preset-note hidden" id="article-summary-options" data-summary-panel="article">
+        文章总结只总结网页里提取出的文字内容，不加入视频、评论、弹幕或用户画像分析。
       </div>
       <label class="prompt-label">
         默认 Prompt

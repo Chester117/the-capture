@@ -3065,7 +3065,7 @@ async function gptSummary(job, options = {}) {
   const danmaku = job.outputs?.danmaku ? readJsonFile(job.outputs.danmaku, []) : [];
   if (interactionOnly && !comments.length && !danmaku.length) throw new Error('还没有评论或弹幕数据可总结');
   const metadata = job.outputs?.metadata ? readJsonFile(job.outputs.metadata, {}) : {};
-  if (!interactionOnly && (platformForJob(job) === 'article' || metadata.platform === 'article')) {
+  if (!interactionOnly && (options.summaryPreset === 'article' || platformForJob(job) === 'article' || metadata.platform === 'article')) {
     return gptArticleSummary(job, options, apiKey, text, metadata);
   }
   const detailText = {
@@ -3378,6 +3378,7 @@ const server = http.createServer(async (req, res) => {
           job.summary = summary;
           job.summaryAt = now();
           job.summaryOptions = {
+            preset: options.summaryPreset || options.preset || '',
             detail: options.detail || 'medium',
             includeComments: options.includeComments !== false,
             includeDanmaku: options.includeDanmaku !== false,

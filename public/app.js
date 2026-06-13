@@ -31,6 +31,8 @@ const stopButton = document.querySelector('#stop-button');
 const deleteButton = document.querySelector('#delete-button');
 const gptModal = document.querySelector('#gpt-modal');
 const gptModalClose = document.querySelector('#gpt-modal-close');
+const summaryPresetButtons = document.querySelectorAll('.summary-preset');
+const summaryPresetPanels = document.querySelectorAll('.summary-preset-panel');
 const gptDetail = document.querySelector('#gpt-detail');
 const gptIncludeComments = document.querySelector('#gpt-include-comments');
 const gptIncludeDanmaku = document.querySelector('#gpt-include-danmaku');
@@ -74,16 +76,23 @@ const DEFAULT_GPT_PROMPT = [
   '6. 定量摘要：用 Markdown 表格列出视频转写段落数、评论数、主评论数、弹幕数、弹幕峰值时间段等关键数字。',
   '写得具体、可读，避免空泛套话。',
 ].join('\n');
+const ARTICLE_GPT_PROMPT = [
+  '你是中文网页文章摘要助手。请只基于网页正文总结，不编造外部事实。',
+  '只总结文章文字内容，不要加入视频转写、评论分析、弹幕分析、用户画像或互动数据。',
+  '输出 Markdown，结构清晰：先给 overview，再列关键要点，最后补充重要细节或数字。',
+].join('\n');
 const storedGptPrompt = localStorage.getItem('flyinglap_gpt_prompt') || '';
 const initialGptPrompt = storedGptPrompt.includes('可行动结论') ? DEFAULT_GPT_PROMPT : (storedGptPrompt || DEFAULT_GPT_PROMPT);
 if (storedGptPrompt && storedGptPrompt !== initialGptPrompt) localStorage.setItem('flyinglap_gpt_prompt', initialGptPrompt);
 const gptSettings = {
+  preset: 'video',
   detail: localStorage.getItem('flyinglap_gpt_detail') || 'medium',
   includeComments: localStorage.getItem('flyinglap_gpt_comments') !== '0',
   includeDanmaku: localStorage.getItem('flyinglap_gpt_danmaku') !== '0',
   includeProfile: localStorage.getItem('flyinglap_gpt_profile') !== '0',
   prompt: initialGptPrompt,
 };
+let gptPresetJobId = '';
 
 async function api(path, options) {
   const headers = { ...(options?.headers || {}) };
@@ -272,13 +281,18 @@ async function loadEmoteDictionary() {
 
 function appendInlineMarkdown(parent, value) {
   const text = String(value || '');
-  const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`)/g;
+  const pattern = /(\*\*\s*([^*]+?)\s*\*\*|__\s*([^_]+?)\s*__|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\))/g;
   let index = 0;
   let match;
   while ((match = pattern.exec(text))) {
     if (match.index > index) parent.appendChild(document.createTextNode(text.slice(index, match.index)));
-    const node = document.createElement(match[2] ? 'strong' : 'code');
-    node.textContent = match[2] || match[3] || '';
+    const node = document.createElement(match[2] || match[3] ? 'strong' : match[4] ? 'code' : 'a');
+    node.textContent = match[2] || match[3] || match[4] || match[5] || '';
+    if (node.tagName === 'A') {
+      node.href = match[6] || '#';
+      node.target = '_blank';
+      node.rel = 'noreferrer';
+    }
     parent.appendChild(node);
     index = match.index + match[0].length;
   }
@@ -393,7 +407,7 @@ function renderMarkdown(node, markdown) {
       node.appendChild(document.createElement('hr'));
       continue;
     }
-    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    const heading = trimmed.match(/^(#{1,4})\s*(.+)$/);
     if (heading) {
       flushParagraph();
       flushList();
@@ -486,6 +500,7 @@ function platformLogo(platform = '') {
     xiaoyuzhou: `/assets/platforms/xiaoyuzhou.png?${version}`,
     youtube: `/assets/platforms/youtube.png?${version}`,
     weibo: `/assets/platforms/weibo.svg?${version}`,
+    article: `/assets/platforms/article.svg?${version}`,
   };
   return logos[platformKey(platform)] || '';
 }
@@ -512,6 +527,12 @@ function platformKeyForJob(job) {
   if (/xiaoyuzhoufm\.com|podcaster\.xiaoyuzhoufm\.com/i.test(url)) return 'xiaoyuzhou';
   if (/weibo\.com|weibo\.cn|t\.cn/i.test(url)) return 'weibo';
   return fromPlatform;
+}
+
+function isArticleJob(job) {
+  return platformKeyForJob(job) === 'article'
+    || job?.metadata?.platform === 'article'
+    || job?.view?.content?.platform === 'article';
 }
 
 async function copyText(value, button, doneText = '已复制') {
@@ -1238,6 +1259,12 @@ function renderDanmakuTimeline(rows) {
 }
 
 function syncGptSettingsForm() {
+  summaryPresetButtons.forEach((button) => {
+    button.classList.toggle('active', button.dataset.summaryPreset === gptSettings.preset);
+  });
+  summaryPresetPanels.forEach((panel) => {
+    panel.classList.toggle('hidden', panel.dataset.summaryPanel !== gptSettings.preset);
+  });
   gptDetail.value = gptSettings.detail;
   gptIncludeComments.checked = gptSettings.includeComments;
   gptIncludeDanmaku.checked = gptSettings.includeDanmaku;
@@ -1245,12 +1272,26 @@ function syncGptSettingsForm() {
   gptPrompt.value = gptSettings.prompt;
 }
 
+function setGptPreset(preset, { resetPrompt = false } = {}) {
+  const next = preset === 'article' ? 'article' : 'video';
+  gptSettings.preset = next;
+  if (resetPrompt) {
+    gptSettings.prompt = next === 'article' ? ARTICLE_GPT_PROMPT : DEFAULT_GPT_PROMPT;
+  } else if (next === 'article' && (!gptSettings.prompt || gptSettings.prompt === DEFAULT_GPT_PROMPT)) {
+    gptSettings.prompt = ARTICLE_GPT_PROMPT;
+  } else if (next === 'video' && (!gptSettings.prompt || gptSettings.prompt === ARTICLE_GPT_PROMPT)) {
+    gptSettings.prompt = DEFAULT_GPT_PROMPT;
+  }
+  syncGptSettingsForm();
+}
+
 function saveGptSettingsFromForm() {
+  gptSettings.preset = document.querySelector('.summary-preset.active')?.dataset.summaryPreset || gptSettings.preset || 'video';
   gptSettings.detail = gptDetail.value;
   gptSettings.includeComments = gptIncludeComments.checked;
   gptSettings.includeDanmaku = gptIncludeDanmaku.checked;
   gptSettings.includeProfile = gptIncludeProfile.checked;
-  gptSettings.prompt = gptPrompt.value.trim() || DEFAULT_GPT_PROMPT;
+  gptSettings.prompt = gptPrompt.value.trim() || (gptSettings.preset === 'article' ? ARTICLE_GPT_PROMPT : DEFAULT_GPT_PROMPT);
   localStorage.setItem('flyinglap_gpt_detail', gptSettings.detail);
   localStorage.setItem('flyinglap_gpt_comments', gptSettings.includeComments ? '1' : '0');
   localStorage.setItem('flyinglap_gpt_danmaku', gptSettings.includeDanmaku ? '1' : '0');
@@ -1355,19 +1396,28 @@ function renderJobs() {
   }
 }
 
-async function loadJobs() {
+async function loadJobs(options = {}) {
+  const { refreshSelected = true, preserveScroll = false } = options;
   const body = await api('/api/jobs');
   jobs = body.jobs || [];
   if (!selectedId && jobs.length) selectedId = jobs[0].id;
   renderJobs();
-  if (selectedId) await loadJob(selectedId);
+  if (refreshSelected && selectedId) await loadJob(selectedId, { preserveScroll });
 }
 
-async function loadJob(id) {
+async function loadJob(id, options = {}) {
+  const sameJob = selectedId === id;
+  const shouldPreserveScroll = options.preserveScroll && sameJob;
+  const scrollX = shouldPreserveScroll ? window.scrollX : 0;
+  const scrollY = shouldPreserveScroll ? window.scrollY : 0;
   selectedId = id;
   renderJobs();
   const { job } = await api(`/api/jobs/${id}`);
   selectedJobSnapshot = job;
+  if (gptPresetJobId !== job.id) {
+    gptPresetJobId = job.id;
+    setGptPreset(isArticleJob(job) ? 'article' : 'video', { resetPrompt: true });
+  }
   emptyState.classList.add('hidden');
   jobDetail.classList.remove('hidden');
   jobTitle.textContent = job.title || job.url;
@@ -1411,6 +1461,9 @@ async function loadJob(id) {
   summaryEmpty.classList.toggle('hidden', Boolean(summary));
   summaryBox.classList.toggle('error', Boolean(localSummary?.startsWith('总结失败：')));
   renderMarkdown(summaryText, summary);
+  if (shouldPreserveScroll) {
+    requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
+  }
 }
 
 async function selectJob(id) {
@@ -1464,7 +1517,7 @@ deleteButton.addEventListener('click', async () => {
   try {
     await api(`/api/jobs/${selectedId}`, { method: 'DELETE' });
     selectedId = '';
-    await loadJobs();
+    await loadJobs({ preserveScroll: true });
     if (!jobs.length) {
       jobDetail.classList.add('hidden');
       emptyState.classList.remove('hidden');
@@ -1502,7 +1555,7 @@ async function runGptSummary(interactionOnly = false) {
     const body = await api(`/api/jobs/${jobId}/gpt-summary`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...gptSettings, interactionOnly }),
+      body: JSON.stringify({ ...gptSettings, summaryPreset: gptSettings.preset, interactionOnly }),
     });
     summaryDrafts.delete(jobId);
     if (isCurrentJob()) {
@@ -1531,7 +1584,7 @@ async function runGptSummary(interactionOnly = false) {
     summaryEmptyGpt.disabled = false;
     summaryEmptyInteraction.disabled = false;
     if (selectedId) {
-      loadJob(selectedId).catch(() => {});
+      loadJob(selectedId, { preserveScroll: true }).catch(() => {});
     }
   }
 }
@@ -1591,12 +1644,17 @@ summaryEmptyInteraction.addEventListener('click', () => runGptSummary(true));
 
 gptSettingsButton.addEventListener('click', openGptModal);
 gptModalClose.addEventListener('click', closeGptModal);
+summaryPresetButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    setGptPreset(button.dataset.summaryPreset || 'video', { resetPrompt: true });
+  });
+});
 gptSaveSettings.addEventListener('click', () => {
   saveGptSettingsFromForm();
   closeGptModal();
 });
 gptResetPrompt.addEventListener('click', () => {
-  gptPrompt.value = DEFAULT_GPT_PROMPT;
+  gptPrompt.value = gptSettings.preset === 'article' ? ARTICLE_GPT_PROMPT : DEFAULT_GPT_PROMPT;
 });
 gptModal.addEventListener('click', (event) => {
   if (event.target === gptModal) closeGptModal();
@@ -1617,7 +1675,10 @@ platformFilter.addEventListener('change', () => {
 });
 
 setInterval(() => {
-  loadJobs().catch(() => {});
+  loadJobs({ refreshSelected: false }).catch(() => {});
+  if (selectedId && selectedJobSnapshot && ['queued', 'running'].includes(selectedJobSnapshot.state)) {
+    loadJob(selectedId, { preserveScroll: true }).catch(() => {});
+  }
 }, 2500);
 
 setInterval(() => {
