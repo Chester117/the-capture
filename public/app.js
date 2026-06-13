@@ -54,7 +54,7 @@ const imageLightboxClose = document.querySelector('#image-lightbox-close');
 let jobs = [];
 let selectedId = '';
 let activeTab = 'comments';
-let platformFilterValue = localStorage.getItem('the_capture_platform_filter') || 'all';
+let platformFilterValue = 'all';
 let commentSort = localStorage.getItem('flyinglap_comment_sort') || 'page';
 let commentSortLoading = '';
 const summaryDrafts = new Map();
@@ -1613,7 +1613,6 @@ syncGptSettingsForm();
 platformFilter.value = platformFilterValue;
 platformFilter.addEventListener('change', () => {
   platformFilterValue = platformFilter.value || 'all';
-  localStorage.setItem('the_capture_platform_filter', platformFilterValue);
   renderJobs();
 });
 
